@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 80 80" fill="none">
+  <!-- 情绪超短-阿发 —— 紫色机器人头像 -->
+  <rect width="80" height="80" rx="16" fill="#F3E5F5"/>
+  <rect x="20" y="18" width="40" height="34" rx="8" fill="#9C27B0"/>
+  <rect x="26" y="26" width="10" height="8" rx="3" fill="#FFF"/>
+  <circle cx="31" cy="30" r="2.5" fill="#333"/>
+  <rect x="44" y="26" width="10" height="8" rx="3" fill="#FFF"/>
+  <circle cx="49" cy="30" r="2.5" fill="#333"/>
+  <path d="M32 40 Q40 46 48 40" stroke="#FFF" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+  <rect x="14" y="28" width="6" height="10" rx="3" fill="#BA68C8"/>
+  <rect x="60" y="28" width="6" height="10" rx="3" fill="#BA68C8"/>
+  <rect x="28" y="54" width="24" height="10" rx="4" fill="#9C27B0"/>
+  <rect x="30" y="56" width="8" height="6" rx="2" fill="#E1BEE7"/>
+  <rect x="42" y="56" width="8" height="6" rx="2" fill="#E1BEE7"/>
+</svg>

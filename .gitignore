@@ -1,0 +1,37 @@
+# macOS / IDE
+.DS_Store
+.idea/
+.vscode/
+
+# Node / Next.js
+node_modules/
+.pnpm-store/
+.next/
+out/
+coverage/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environment
+.env
+.env.local
+.env.*.local
+web/.env
+server/.env
+
+# Build / runtime
+logs/
+*.log
+celerybeat-schedule
+htmlcov/
+
+# Infrastructure
+minio-data/
+postgres-data/
+redis-data/

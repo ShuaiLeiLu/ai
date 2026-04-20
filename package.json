@@ -1,0 +1,12 @@
+{
+  "name": "cyber-invest",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "dev:web": "pnpm --dir web dev",
+    "build:web": "pnpm --dir web build",
+    "lint:web": "pnpm --dir web lint",
+    "typecheck:web": "pnpm --dir web typecheck"
+  }
+}

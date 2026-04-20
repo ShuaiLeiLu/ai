@@ -1,0 +1,16 @@
+.git
+.idea
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+
+docs
+scripts
+web/node_modules
+web/.next
+web/tsconfig.tsbuildinfo
+server/.pytest_cache
+server/**/__pycache__
