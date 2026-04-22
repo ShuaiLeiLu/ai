@@ -24,7 +24,7 @@ export async function http<T>(path: string, init?: RequestInit): Promise<T> {
       ...getAuthHeaders(),
       ...(init?.headers ?? {})
     },
-    cache: 'no-store'
+    cache: 'default'
   });
 
   const isJson = response.headers.get('content-type')?.includes('application/json');

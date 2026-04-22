@@ -8,14 +8,18 @@ const featureKey = 'community';
 export const useCommunityPosts = () =>
   useQuery({
     queryKey: [featureKey, 'posts'],
-    queryFn: api.listCommunityPosts
+    queryFn: api.listCommunityPosts,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
   });
 
 export const useCommunityPostDetail = (postId?: string) =>
   useQuery({
     queryKey: [featureKey, 'detail', postId ?? 'none'],
     queryFn: () => api.getCommunityPostDetail(postId as string),
-    enabled: Boolean(postId)
+    enabled: Boolean(postId),
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
   });
 
 export const useCreateCommunityPost = () => {

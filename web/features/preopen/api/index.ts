@@ -8,6 +8,7 @@ import {
   ListResponse,
   LimitUpLadderItem,
   MarketIndicator,
+  PreopenAllData,
   StockRankItem,
   TrendOverview
 } from '@/types/preopen';
@@ -52,4 +53,9 @@ export const getStockRank = (direction: 'up' | 'down' = 'up'): Promise<StockRank
   return http<ApiResponse<ListResponse<StockRankItem>>>(`/preopen/stock-rank?direction=${direction}`).then(
     (res) => res.data.items
   );
+};
+
+/** 聚合接口 —— 一次请求获取盘前速览全量数据 */
+export const getPreopenAll = (): Promise<PreopenAllData> => {
+  return http<ApiResponse<PreopenAllData>>('/preopen/all').then((res) => res.data);
 };

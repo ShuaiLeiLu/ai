@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import time
 from collections import Counter
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from app.integrations.akshare.client import (
     get_limit_up_pool,
@@ -39,6 +41,10 @@ from app.modules.news_analysis.schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+# LLM 结果缓存（5 分钟）
+_llm_panels_cache: dict[str, Any] = {"data": None, "expires_at": 0.0}
+_LLM_CACHE_TTL = 300  # 5 分钟
 
 
 def _news_id(text: str) -> str:
@@ -226,6 +232,10 @@ class NewsAnalysisService:
           3. 解析 LLM 返回的结构化内容，生成 4 张 AI 面板
           4. LLM 不可用时自动降级到 list_ai_panels()
         """
+        now_mono = time.monotonic()
+        if _llm_panels_cache["data"] is not None and now_mono < _llm_panels_cache["expires_at"]:
+            return _llm_panels_cache["data"]
+
         llm = get_llm_client()
         if not llm.is_configured:
             logger.warning("LLM 未配置，AI 面板降级为模板拼接")
@@ -262,13 +272,18 @@ class NewsAnalysisService:
             reply = await llm.chat(messages, temperature=0.5, max_tokens=1500)
             panels = self._parse_ai_panels_response(reply)
             if panels:
+                _llm_panels_cache["data"] = panels
+                _llm_panels_cache["expires_at"] = time.monotonic() + _LLM_CACHE_TTL
                 return panels
             logger.warning("LLM 返回内容解析失败，降级为模板拼接")
         except Exception as e:
             logger.error("Gemini AI 面板生成失败: %s", e)
 
         # 4. 降级
-        return await run_sync(self.list_ai_panels)
+        result = await run_sync(self.list_ai_panels)
+        _llm_panels_cache["data"] = result
+        _llm_panels_cache["expires_at"] = time.monotonic() + _LLM_CACHE_TTL
+        return result
 
     @staticmethod
     def _parse_ai_panels_response(reply: str) -> list[NewsAiPanel] | None:

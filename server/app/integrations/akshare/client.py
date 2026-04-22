@@ -28,6 +28,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from functools import partial
+from threading import Lock
 from typing import Any, Callable, TypeVar
 
 import pandas as pd
@@ -35,7 +36,7 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 # 用于 run_in_executor 的线程池（AKShare 是同步阻塞调用）
-_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="akshare")
+_executor = ThreadPoolExecutor(max_workers=12, thread_name_prefix="akshare")
 T = TypeVar("T")
 
 
@@ -96,6 +97,7 @@ class TTLCache:
 
 # 全局缓存实例
 _cache = TTLCache()
+_stock_quotes_lock = Lock()
 
 # 缓存 TTL 配置（秒）
 CACHE_TTL_REALTIME = 15       # 实时行情：15 秒
@@ -272,36 +274,43 @@ def get_stock_quotes() -> list[StockQuote]:
     if cached is not None:
         return cached
 
-    try:
-        import akshare as ak
-        df = ak.stock_zh_a_spot()
-    except Exception:
-        logger.exception("获取 A 股实时行情失败")
-        return []
+    # 并发去重：同一时刻只允许一个线程去外部拉全市场行情。
+    # 其他请求等待第一个请求完成后直接读缓存，避免 account / positions / stats 并发时重复打满外部源。
+    with _stock_quotes_lock:
+        cached = _cache.get(cache_key)
+        if cached is not None:
+            return cached
 
-    quotes: list[StockQuote] = []
-    for _, row in df.iterrows():
-        symbol = _strip_exchange_prefix(_safe_str(row.get("代码")))
-        if not symbol:
-            continue
-        quotes.append(StockQuote(
-            symbol=symbol,
-            name=_safe_str(row.get("名称")),
-            price=_safe_float(row.get("最新价")),
-            change=_safe_float(row.get("涨跌额")),
-            change_pct=_safe_float(row.get("涨跌幅")),
-            open=_safe_float(row.get("今开")),
-            high=_safe_float(row.get("最高")),
-            low=_safe_float(row.get("最低")),
-            prev_close=_safe_float(row.get("昨收")),
-            volume=_safe_float(row.get("成交量")),
-            amount=_safe_float(row.get("成交额")),
-            timestamp=_safe_str(row.get("时间戳")),
-        ))
+        try:
+            import akshare as ak
+            df = ak.stock_zh_a_spot()
+        except Exception:
+            logger.exception("获取 A 股实时行情失败")
+            return []
 
-    _cache.set(cache_key, quotes, CACHE_TTL_REALTIME)
-    logger.info("获取 A 股实时行情成功：%d 条", len(quotes))
-    return quotes
+        quotes: list[StockQuote] = []
+        for _, row in df.iterrows():
+            symbol = _strip_exchange_prefix(_safe_str(row.get("代码")))
+            if not symbol:
+                continue
+            quotes.append(StockQuote(
+                symbol=symbol,
+                name=_safe_str(row.get("名称")),
+                price=_safe_float(row.get("最新价")),
+                change=_safe_float(row.get("涨跌额")),
+                change_pct=_safe_float(row.get("涨跌幅")),
+                open=_safe_float(row.get("今开")),
+                high=_safe_float(row.get("最高")),
+                low=_safe_float(row.get("最低")),
+                prev_close=_safe_float(row.get("昨收")),
+                volume=_safe_float(row.get("成交量")),
+                amount=_safe_float(row.get("成交额")),
+                timestamp=_safe_str(row.get("时间戳")),
+            ))
+
+        _cache.set(cache_key, quotes, CACHE_TTL_REALTIME)
+        logger.info("获取 A 股实时行情成功：%d 条", len(quotes))
+        return quotes
 
 
 def get_stock_quote_by_symbols(symbols: list[str]) -> dict[str, StockQuote]:
@@ -309,6 +318,15 @@ def get_stock_quote_by_symbols(symbols: list[str]) -> dict[str, StockQuote]:
     all_quotes = get_stock_quotes()
     symbol_set = set(symbols)
     return {q.symbol: q for q in all_quotes if q.symbol in symbol_set}
+
+
+def peek_stock_quote_by_symbols(symbols: list[str]) -> dict[str, StockQuote]:
+    """只从本地缓存读取个股行情，不触发外部行情拉取。"""
+    cached = _cache.get("stock_quotes_all")
+    if cached is None:
+        return {}
+    symbol_set = set(symbols)
+    return {q.symbol: q for q in cached if q.symbol in symbol_set}
 
 
 def get_index_quotes() -> list[IndexQuote]:

@@ -44,7 +44,11 @@ import {
 } from '@ant-design/icons';
 
 import { useHiredResearchers, useHotDocuments, usePublicRank } from '@/features/researcher-workbench/hooks';
-import { useTradingAccount, useTradingPositions } from '@/features/trading/hooks';
+import {
+  useTradingAccountWhenEnabled,
+  useTradingPositionsWhenEnabled,
+  useTradingRealtimeStream,
+} from '@/features/trading/hooks';
 import { routes } from '@/lib/constants/routes';
 import type { HiredResearcher, HotDocument, PublicRankItem, RankSortBy } from '@/types/researcher-workbench';
 
@@ -441,8 +445,10 @@ function LatestDocuments({
  */
 function PortfolioSection({ researcher }: { researcher: HiredResearcher }) {
   const rid = researcher.researcher_id;
-  const accountQuery = useTradingAccount(rid);
-  const positionsQuery = useTradingPositions(rid);
+  const realtime = useTradingRealtimeStream(rid);
+  const enableRestSnapshot = realtime.status !== 'live';
+  const accountQuery = useTradingAccountWhenEnabled(rid, enableRestSnapshot);
+  const positionsQuery = useTradingPositionsWhenEnabled(rid, enableRestSnapshot);
 
   const loading = accountQuery.isLoading || positionsQuery.isLoading;
   const acct = accountQuery.data;
@@ -464,6 +470,24 @@ function PortfolioSection({ researcher }: { researcher: HiredResearcher }) {
           <Typography.Title level={5} className="!mb-0">模拟账户</Typography.Title>
           <span className="text-xs text-slate-400">当前持仓</span>
           <span className="text-xs text-slate-400">{currentMonth}</span>
+          <span className="flex items-center gap-1.5 text-xs text-slate-400">
+            <span className={`inline-block h-2 w-2 rounded-full ${
+              realtime.status === 'live'
+                ? 'bg-emerald-500'
+                : realtime.status === 'connecting'
+                  ? 'bg-amber-400'
+                  : realtime.status === 'error'
+                    ? 'bg-rose-500'
+                    : 'bg-slate-300'
+            }`} />
+            {realtime.status === 'live'
+              ? '实时更新中'
+              : realtime.status === 'connecting'
+                ? '连接中'
+                : realtime.status === 'error'
+                  ? '重连中'
+                  : '未连接'}
+          </span>
         </div>
         <Link
           href={routes.tradingDetail(rid)}

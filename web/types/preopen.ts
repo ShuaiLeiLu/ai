@@ -105,3 +105,16 @@ export interface StockRankItem {
   industry: string;            // 所属行业
   reason: string;              // 入选理由
 }
+
+/** 盘前速览聚合数据 */
+export interface PreopenAllData {
+  hot_news: HotNewsItem[];
+  ai_digest: AiDigest;
+  market_indicators: MarketIndicator[];
+  anomalies: AnomalyOverview;
+  trends: TrendOverview;
+  limit_up_ladder: LimitUpLadderItem[];
+  industry_boards: IndustryBoardItem[];
+  stock_rank_up: StockRankItem[];
+  stock_rank_down: StockRankItem[];
+}

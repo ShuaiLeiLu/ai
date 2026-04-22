@@ -7,19 +7,25 @@ const featureKey = 'documents';
 export const useDocuments = (params?: api.ListDocumentsParams) =>
   useQuery({
     queryKey: [featureKey, 'list', params ?? {}],
-    queryFn: () => api.listDocuments(params)
+    queryFn: () => api.listDocuments(params),
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
   });
 
 export const useHotDocuments = (limit = 6) =>
   useQuery({
     queryKey: [featureKey, 'hot', limit],
-    queryFn: () => api.listHotDocuments(limit)
+    queryFn: () => api.listHotDocuments(limit),
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
   });
 
 export const useDocumentDetail = (documentId?: string) =>
   useQuery({
     queryKey: [featureKey, 'detail', documentId ?? 'none'],
     queryFn: () => api.getDocumentDetail(documentId as string),
-    enabled: Boolean(documentId)
+    enabled: Boolean(documentId),
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
   });
 

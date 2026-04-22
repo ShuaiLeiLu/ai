@@ -18,11 +18,13 @@ from pydantic import Field
 from app.schemas.common import SchemaModel
 
 TradeSide = Literal["buy", "sell"]  # 买入 / 卖出
+DEFAULT_INITIAL_CAPITAL = 1_000_000.0
 
 
 class TradingAccount(SchemaModel):
     """模拟账户概况"""
     account_id: str
+    initial_capital: float = DEFAULT_INITIAL_CAPITAL
     total_asset: float       # 总资产
     available_cash: float    # 可用资金
     holding_value: float     # 持仓市值
@@ -49,6 +51,10 @@ class TradeRecord(SchemaModel):
     price: float
     amount: float = 0.0      # 成交金额 = price * quantity
     commission: float = 0.0  # 手续费
+    cost_price: float | None = None
+    realized_pnl: float | None = None
+    realized_pnl_pct: float | None = None
+    hold_days: float | None = None
     created_at: datetime
 
 
@@ -102,6 +108,13 @@ class TradingStats(SchemaModel):
     monthly_returns: list[MonthlyReturn]  # 月度收益
     daily_returns: list[DailyReturn]   # 日收益序列
     risk: RiskMetrics                  # 风控指标
+
+
+class TradingStreamSnapshot(SchemaModel):
+    """交易实时快照（SSE 推送）。"""
+    generated_at: datetime
+    account: TradingAccount
+    positions: list[PositionItem]
 
 
 class PlaceOrderRequest(SchemaModel):

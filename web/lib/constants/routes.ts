@@ -12,7 +12,8 @@ export const routes = {
   preopen: '/workstation/overview',
   tasks: '/workstation/tasks',
   trading: '/workstation/trading',
-  tradingDetail: (researcherId: string) => `/workstation/trading/${researcherId}`,
+  tradingDetail: (researcherId: string): `/workstation/trading/${string}` =>
+    `/workstation/trading/${researcherId}`,
   billing: '/workstation/billing',
   userGuide: '/workstation/user-guide',
   // 赛博实验室子页面

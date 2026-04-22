@@ -7,7 +7,9 @@ const featureKey = 'researcher-market';
 export const useMarketResearchers = (params?: api.MarketQueryParams) => {
   return useQuery({
     queryKey: [featureKey, 'market', params ?? {}],
-    queryFn: () => api.getMarketResearchers(params)
+    queryFn: () => api.getMarketResearchers(params),
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
   });
 };
 
@@ -15,14 +17,18 @@ export const useMarketResearcherDetail = (researcherId?: string, enabled = true)
   return useQuery({
     queryKey: [featureKey, 'detail', researcherId ?? 'none'],
     queryFn: () => api.getMarketResearcherDetail(researcherId as string),
-    enabled: Boolean(researcherId) && enabled
+    enabled: Boolean(researcherId) && enabled,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
   });
 };
 
 export const useMineResearchers = () => {
   return useQuery({
     queryKey: [featureKey, 'mine'],
-    queryFn: api.getMyResearchers
+    queryFn: api.getMyResearchers,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
   });
 };
 

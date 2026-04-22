@@ -2,6 +2,7 @@ export type TradeSide = 'buy' | 'sell';
 
 export interface TradingAccount {
   account_id: string;
+  initial_capital: number;
   total_asset: number;
   available_cash: number;
   holding_value: number;
@@ -26,6 +27,10 @@ export interface TradeRecord {
   price: number;
   amount: number;
   commission: number;
+  cost_price?: number | null;
+  realized_pnl?: number | null;
+  realized_pnl_pct?: number | null;
+  hold_days?: number | null;
   created_at: string;
 }
 
@@ -75,6 +80,12 @@ export interface TradingStats {
   risk: RiskMetrics;
 }
 
+export interface TradingStreamSnapshot {
+  generated_at: string;
+  account: TradingAccount;
+  positions: PositionItem[];
+}
+
 /** 交易日志条目（trade 表格 / analysis 富文本） */
 export interface TradeLogItem {
   log_id: string;
@@ -84,4 +95,3 @@ export interface TradeLogItem {
   content: string;           // Markdown
   created_at: string;
 }
-

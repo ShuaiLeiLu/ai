@@ -332,8 +332,8 @@ async def _execute_for_researcher(session: AsyncSession, researcher: Researcher)
     acct_result = await session.execute(acct_stmt)
     account = acct_result.scalar_one_or_none()
     if not account:
-        logger.info("[策略引擎] %s 没有模拟账户，自动创建（初始资金 10 万）", researcher.name)
-        initial_cash = 100_000.0
+        logger.info("[策略引擎] %s 没有模拟账户，自动创建（初始资金 100 万）", researcher.name)
+        initial_cash = 1_000_000.0
         account = TradingAccount(
             id=f"acct_{uuid4().hex[:10]}",
             user_id=researcher.owner_id,
@@ -456,6 +456,7 @@ async def _execute_for_researcher(session: AsyncSession, researcher: Researcher)
 
             account.available_cash -= amount + commission
             account.holding_value += amount
+            daily_pnl -= commission
 
             new_pos = Position(
                 id=f"pos_{uuid4().hex[:8]}",
@@ -493,7 +494,7 @@ async def _execute_for_researcher(session: AsyncSession, researcher: Researcher)
                 content="",
             ))
             # ── 写交易日志：analysis 条目 ──
-            position_pct = (amount / (account.total_asset or 100000)) * 100
+            position_pct = (amount / (account.total_asset or 1000000)) * 100
             session.add(TradeLog(
                 id=f"tl_{uuid4().hex[:8]}",
                 account_id=account.id,

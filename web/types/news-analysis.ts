@@ -81,3 +81,11 @@ export interface StockNewsSummary {
   avg_confidence: number;
   latest_publish_time: string | null;
 }
+
+/** 资讯分析聚合数据 */
+export interface NewsAnalysisAllData {
+  feed: NewsFeedItem[];
+  ai_panels: AIPanelData[];
+  hot_stocks: HotStock[];
+  hot_news: HotNewsItem[];
+}

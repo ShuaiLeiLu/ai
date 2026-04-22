@@ -86,3 +86,11 @@ class StockNewsSummary(SchemaModel):
     related_themes: list[str]
     avg_confidence: float
     latest_publish_time: datetime | None = None
+
+
+class NewsAnalysisAllData(SchemaModel):
+    """资讯分析聚合数据 —— 一次请求返回全部。"""
+    feed: list[NewsAnalysisItem]
+    ai_panels: list[NewsAiPanel]
+    hot_stocks: list[HotStockTag]
+    hot_news: list[HotNewsRankItem]

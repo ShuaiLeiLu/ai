@@ -49,12 +49,12 @@ const HeroSection: FC = () => (
       <p className="max-w-2xl mx-auto text-lg md:text-xl text-white/80 drop-shadow-sm mb-10 animate-fade-in-up">
         AI 驱动的下一代投研平台。整合、分析、决策，赋予每位投资者机构级的智慧。
       </p>
-      <div className="flex justify-center gap-4 animate-fade-in-up" style={{ animationDelay: '0.5s' }}>
-        <Link href={routes.workstation}>
+      <div className="flex flex-col items-center gap-4 animate-fade-in-up" style={{ animationDelay: '0.5s' }}>
+        <Link href={routes.aiResearcher}>
           <Button
             type="primary"
             size="large"
-            className="!bg-white !text-blue-900 !font-bold !border-none !shadow-lg hover:!bg-gray-200 transition-all duration-300 transform hover:scale-105"
+            className="!h-14 !px-10 !text-xl !bg-white !text-blue-900 !font-bold !border-none !shadow-lg hover:!bg-gray-200 transition-all duration-300 transform hover:scale-105"
           >
             进入工作站 <ArrowRightOutlined />
           </Button>
@@ -62,7 +62,7 @@ const HeroSection: FC = () => (
         <Link href={routes.login}>
           <Button
             size="large"
-            className="!bg-white/20 !text-white !border-white/50 hover:!bg-white/30 hover:!border-white/70 transition-all duration-300 transform hover:scale-105"
+            className="!bg-white !text-slate-800 !border-white hover:!bg-slate-100 hover:!text-slate-900 transition-all duration-300 transform hover:scale-105"
           >
             登录/注册
           </Button>

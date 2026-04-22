@@ -5,32 +5,37 @@ import { GetNewsFeedParams } from '@/types/news-analysis';
 
 const FEATURE_KEY = 'news-analysis';
 
-export const useNewsFeed = (params: GetNewsFeedParams) => {
+/**
+ * 聚合查询 —— 一次请求获取资讯分析全量数据。
+ * 各子 hook 从聚合数据中提取所需字段，共享同一份缓存。
+ */
+function useNewsAnalysisAll() {
   return useQuery({
-    queryKey: [FEATURE_KEY, 'feed', params],
-    queryFn: () => api.getNewsFeed(params),
+    queryKey: [FEATURE_KEY, 'all'],
+    queryFn: api.getNewsAnalysisAll,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
   });
+}
+
+export const useNewsFeed = (_params?: GetNewsFeedParams) => {
+  const query = useNewsAnalysisAll();
+  return { ...query, data: query.data?.feed };
 };
 
 export const useAIPanels = () => {
-  return useQuery({
-    queryKey: [FEATURE_KEY, 'ai-panels'],
-    queryFn: api.getAIPanels,
-  });
+  const query = useNewsAnalysisAll();
+  return { ...query, data: query.data?.ai_panels };
 };
 
 export const useHotStocks = () => {
-  return useQuery({
-    queryKey: [FEATURE_KEY, 'hot-stocks'],
-    queryFn: api.getHotStocks,
-  });
+  const query = useNewsAnalysisAll();
+  return { ...query, data: query.data?.hot_stocks };
 };
 
 export const useHotNews = () => {
-  return useQuery({
-    queryKey: [FEATURE_KEY, 'hot-news'],
-    queryFn: api.getHotNews,
-  });
+  const query = useNewsAnalysisAll();
+  return { ...query, data: query.data?.hot_news };
 };
 
 export const useNewsSummaryByStock = (stockCode: string, options?: { enabled?: boolean }) => {
@@ -38,5 +43,7 @@ export const useNewsSummaryByStock = (stockCode: string, options?: { enabled?: b
     queryKey: [FEATURE_KEY, 'summary', stockCode],
     queryFn: () => api.getNewsSummaryByStock(stockCode),
     enabled: options?.enabled ?? false,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
   });
 };

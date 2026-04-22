@@ -8,7 +8,9 @@ const FEATURE_KEY = 'tasks';
 export const useGetTasks = (filters?: api.TaskQueryFilters) => {
   return useQuery({
     queryKey: [FEATURE_KEY, 'list', filters ?? {}],
-    queryFn: () => api.getTasks(filters)
+    queryFn: () => api.getTasks(filters),
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
   });
 };
 

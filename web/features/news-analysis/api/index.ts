@@ -5,6 +5,7 @@ import {
   GetNewsFeedParams,
   HotNewsItem,
   HotStock,
+  NewsAnalysisAllData,
   NewsFeedItem,
   StockNewsSummary
 } from '@/types/news-analysis';
@@ -50,4 +51,9 @@ export const getNewsSummaryByStock = (stockCode: string): Promise<StockNewsSumma
   return http<ApiResponse<StockNewsSummary>>(
     `${NEWS_ANALYSIS_API_BASE}/by-stock/${stockCode}/summary`
   ).then((res) => res.data);
+};
+
+/** 聚合接口 —— 一次请求获取资讯分析全量数据 */
+export const getNewsAnalysisAll = (): Promise<NewsAnalysisAllData> => {
+  return http<ApiResponse<NewsAnalysisAllData>>(`${NEWS_ANALYSIS_API_BASE}/all`).then((res) => res.data);
 };

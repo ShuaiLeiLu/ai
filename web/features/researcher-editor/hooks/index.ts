@@ -10,28 +10,36 @@ export const useResearcherDetail = (researcherId?: string) => {
   return useQuery({
     queryKey: [featureKey, 'detail', researcherId ?? 'new'],
     queryFn: () => api.getResearcherDetail(researcherId as string),
-    enabled: Boolean(researcherId)
+    enabled: Boolean(researcherId),
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
   });
 };
 
 export const useSkillOptions = () => {
   return useQuery({
     queryKey: [featureKey, 'options', 'skills'],
-    queryFn: api.listSkillOptions
+    queryFn: api.listSkillOptions,
+    staleTime: 120_000,
+    refetchOnWindowFocus: false,
   });
 };
 
 export const useKnowledgeBaseOptions = () => {
   return useQuery({
     queryKey: [featureKey, 'options', 'knowledge-bases'],
-    queryFn: api.listKnowledgeBaseOptions
+    queryFn: api.listKnowledgeBaseOptions,
+    staleTime: 120_000,
+    refetchOnWindowFocus: false,
   });
 };
 
 export const useMcpServerOptions = () => {
   return useQuery({
     queryKey: [featureKey, 'options', 'mcp-servers'],
-    queryFn: api.listMcpServerOptions
+    queryFn: api.listMcpServerOptions,
+    staleTime: 120_000,
+    refetchOnWindowFocus: false,
   });
 };
 

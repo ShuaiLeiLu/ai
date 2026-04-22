@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import time
 from collections import Counter
 from datetime import UTC, date, datetime, timedelta
+from typing import Any
 
 from app.integrations.akshare.client import (
     get_industry_boards,
@@ -43,6 +45,10 @@ from app.modules.preopen.schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+# LLM 结果缓存（5 分钟）
+_llm_digest_cache: dict[str, Any] = {"data": None, "expires_at": 0.0}
+_LLM_CACHE_TTL = 300  # 5 分钟
 
 
 def _make_calendar() -> TradingCalendarHint:
@@ -201,6 +207,11 @@ class PreopenService:
           3. 解析 LLM 返回的结构化内容
           4. LLM 不可用时自动降级到 get_ai_digest()
         """
+        # 缓存命中直接返回
+        now_mono = time.monotonic()
+        if _llm_digest_cache["data"] is not None and now_mono < _llm_digest_cache["expires_at"]:
+            return _llm_digest_cache["data"]
+
         llm = get_llm_client()
         if not llm.is_configured:
             logger.warning("LLM 未配置，盘前解读降级为模板拼接")
@@ -236,13 +247,18 @@ class PreopenService:
             reply = await llm.chat(messages, temperature=0.5, max_tokens=800)
             digest = self._parse_ai_digest_response(reply)
             if digest:
+                _llm_digest_cache["data"] = digest
+                _llm_digest_cache["expires_at"] = time.monotonic() + _LLM_CACHE_TTL
                 return digest
             logger.warning("LLM 盘前解读解析失败，降级为模板拼接")
         except Exception as e:
             logger.error("Gemini 盘前解读生成失败: %s", e)
 
         # 4. 降级
-        return await run_sync(self.get_ai_digest)
+        result = await run_sync(self.get_ai_digest)
+        _llm_digest_cache["data"] = result
+        _llm_digest_cache["expires_at"] = time.monotonic() + _LLM_CACHE_TTL
+        return result
 
     @staticmethod
     def _parse_ai_digest_response(reply: str) -> AiDigest | None:

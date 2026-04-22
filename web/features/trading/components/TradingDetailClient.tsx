@@ -26,7 +26,14 @@ import dayjs from 'dayjs';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-import { useTradingAccount, useTradingLogs, useTradingPositions, useTradingRecords, useTradingStats } from '@/features/trading/hooks';
+import {
+  useTradingAccountWhenEnabled,
+  useTradingLogs,
+  useTradingPositionsWhenEnabled,
+  useTradingRealtimeStream,
+  useTradingRecords,
+  useTradingStatsWhenEnabled,
+} from '@/features/trading/hooks';
 import { routes } from '@/lib/constants/routes';
 import type { PositionItem, TradeLogItem, TradeRecord, TradingStats } from '@/types/trading';
 
@@ -161,7 +168,7 @@ function TradeLogTradeBlock({ log }: { log: TradeLogItem }) {
           <tr className="text-xs text-slate-400 border-b border-slate-100">
             <th className="py-2 px-4 text-left font-medium">股票名称</th>
             <th className="py-2 px-4 text-left font-medium">股票代码</th>
-            <th className="py-2 px-4 text-right font-medium">{isSell ? '买入价格' : '买入价格'}</th>
+            <th className="py-2 px-4 text-right font-medium">{isSell ? '成本价格' : '买入价格'}</th>
             {isSell && <th className="py-2 px-4 text-right font-medium">卖出价格</th>}
             <th className="py-2 px-4 text-right font-medium">{isSell ? '卖出数量' : '买入数量'}</th>
             <th className="py-2 px-4 text-right font-medium">{isSell ? '卖出金额' : '买入金额'}</th>
@@ -174,16 +181,23 @@ function TradeLogTradeBlock({ log }: { log: TradeLogItem }) {
         <tbody>
           {records.map((r) => {
             const amount = r.price * r.quantity;
-            const pnlVal = isSell ? -(r.commission || 0) : 0;
-            const pnlPctStr = isSell && r.commission > 0
-              ? `-${((r.commission / amount) * 100).toFixed(2)}%`
+            const pnlVal = r.realized_pnl ?? 0;
+            const pnlPctStr = r.realized_pnl_pct !== null && r.realized_pnl_pct !== undefined
+              ? fmtPct(r.realized_pnl_pct)
               : '-';
+            const resultLabel = r.side === 'buy'
+              ? '买入'
+              : pnlVal > 0
+                ? '盈利'
+                : pnlVal < 0
+                  ? '亏损'
+                  : '保本';
             return (
               <tr key={r.trade_id} className="border-b border-slate-50 hover:bg-slate-50/50">
                 <td className="py-2.5 px-4 font-medium text-slate-700">{r.name || r.symbol}</td>
                 <td className="py-2.5 px-4 text-slate-500">{r.symbol}</td>
                 <td className="py-2.5 px-4 text-right text-slate-600">
-                  {r.side === 'buy' ? r.price.toFixed(2) + ' 元' : '-'}
+                  {r.cost_price ? r.cost_price.toFixed(2) + ' 元' : '-'}
                 </td>
                 {isSell && (
                   <td className="py-2.5 px-4 text-right text-slate-600">
@@ -194,7 +208,7 @@ function TradeLogTradeBlock({ log }: { log: TradeLogItem }) {
                 <td className="py-2.5 px-4 text-right text-slate-600">{fmtMoney(amount)} 元</td>
                 {isSell && (
                   <td className={`py-2.5 px-4 text-right font-medium ${pnlColor(pnlVal)}`}>
-                    {pnlVal !== 0 ? `${fmtMoney(pnlVal)} 元` : '-'}
+                    {`${pnlVal > 0 ? '+' : ''}${fmtMoney(pnlVal)} 元`}
                   </td>
                 )}
                 {isSell && (
@@ -205,7 +219,7 @@ function TradeLogTradeBlock({ log }: { log: TradeLogItem }) {
                 )}
                 <td className="py-2.5 px-4 text-center">
                   <Tag color={r.side === 'buy' ? 'red' : 'green'} className="!text-xs">
-                    {r.side === 'buy' ? '买入' : isSell && pnlVal >= 0 ? '盈利' : '亏损'}
+                    {resultLabel}
                   </Tag>
                 </td>
               </tr>
@@ -280,7 +294,7 @@ function TradeLogTab({ logs }: { logs: TradeLogItem[] }) {
                       color={log.log_type === 'trade' ? 'orange' : 'purple'}
                       className="!text-xs !px-1.5 !py-0"
                     >
-                      {log.log_type === 'trade' ? 'TRADE' : 'TRADE'}
+                      {log.log_type === 'trade' ? 'TRADE' : 'ANALYSIS'}
                     </Tag>
                   </div>
 
@@ -494,7 +508,7 @@ function HistoryTab({ stats, records }: { stats: TradingStats | null; records: T
               const hasTrade = d.pnl !== 0;
               /** 收益率：基于初始资金的当日 pnl 百分比 */
               const pnlPctStr = hasTrade
-                ? `${d.pnl > 0 ? '+' : ''}${((d.pnl / (stats?.initial_capital || 100000)) * 100).toFixed(2)}%`
+                ? `${d.pnl > 0 ? '+' : ''}${((d.pnl / (stats?.initial_capital || 1000000)) * 100).toFixed(2)}%`
                 : '';
               return (
                 <div
@@ -624,21 +638,23 @@ export function TradingDetailClient({ researcherId }: { researcherId: string }) 
   const [sideTab, setSideTab] = useState<'current' | 'history'>('current'); // 侧边栏 tab
   const [activeSymbol, setActiveSymbol] = useState<string | null>(null); // 选中的持仓
 
-  const accountQuery = useTradingAccount(researcherId);
-  const positionsQuery = useTradingPositions(researcherId);
+  const realtime = useTradingRealtimeStream(researcherId);
+  const enableRestSnapshot = realtime.status !== 'live';
+  const accountQuery = useTradingAccountWhenEnabled(researcherId, enableRestSnapshot);
+  const positionsQuery = useTradingPositionsWhenEnabled(researcherId, enableRestSnapshot);
   const recordsQuery = useTradingRecords(researcherId);
   const logsQuery = useTradingLogs(researcherId);
-  const statsQuery = useTradingStats(researcherId);
+  const statsQuery = useTradingStatsWhenEnabled(researcherId, mainTab === 'history');
 
-  const loading = accountQuery.isLoading || positionsQuery.isLoading || recordsQuery.isLoading;
+  const loading = accountQuery.isLoading || positionsQuery.isLoading || recordsQuery.isLoading || logsQuery.isLoading;
   const acct = accountQuery.data;
   const positions = positionsQuery.data ?? [];
   const records = recordsQuery.data ?? [];
   const logs = logsQuery.data ?? [];
   const stats = statsQuery.data ?? null;
 
-  /** 初始资金（固定 10 万） */
-  const INITIAL = 100_000;
+  /** 初始资金（以后端返回为准，缺失时兜底 100 万） */
+  const INITIAL = acct?.initial_capital ?? stats?.initial_capital ?? 1_000_000;
 
   /** 总收益率 */
   const totalReturnPct = acct ? (acct.total_asset - INITIAL) / INITIAL : 0;
@@ -647,7 +663,7 @@ export function TradingDetailClient({ researcherId }: { researcherId: string }) 
     <div className="min-h-screen bg-slate-50">
       {/* 顶部导航栏 */}
       <div className="bg-white border-b border-slate-200 px-4 sm:px-6 py-3">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center justify-between gap-3">
           <Link
             href={routes.aiResearcher as any}
             className="flex items-center gap-1 text-sm text-slate-500 hover:text-violet-600 transition-colors"
@@ -655,6 +671,26 @@ export function TradingDetailClient({ researcherId }: { researcherId: string }) 
             <LeftOutlined className="text-xs" />
             <span>模拟交易详情</span>
           </Link>
+          <div className="flex items-center gap-2">
+            <span className={`inline-block h-2.5 w-2.5 rounded-full ${
+              realtime.status === 'live'
+                ? 'bg-emerald-500'
+                : realtime.status === 'connecting'
+                  ? 'bg-amber-400'
+                  : realtime.status === 'error'
+                    ? 'bg-rose-500'
+                    : 'bg-slate-300'
+            }`} />
+            <span className="text-xs text-slate-400">
+              {realtime.status === 'live'
+                ? '实时推送中'
+                : realtime.status === 'connecting'
+                  ? '正在连接实时行情'
+                  : realtime.status === 'error'
+                    ? '实时流重连中'
+                    : '实时流未开启'}
+            </span>
+          </div>
         </div>
       </div>
 

@@ -7,7 +7,7 @@
 """
 from __future__ import annotations
 
-from sqlalchemy import Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
@@ -16,6 +16,9 @@ from app.models.base import Base, TimestampMixin
 class TradingAccount(Base, TimestampMixin):
     """模拟交易账户"""
     __tablename__ = "trading_accounts"
+    __table_args__ = (
+        Index("ix_trading_accounts_user_researcher", "user_id", "researcher_id"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     user_id: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), nullable=False, index=True)
@@ -33,6 +36,9 @@ class TradingAccount(Base, TimestampMixin):
 class Position(Base, TimestampMixin):
     """持仓记录"""
     __tablename__ = "positions"
+    __table_args__ = (
+        Index("ix_positions_account_symbol", "account_id", "symbol"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     account_id: Mapped[str] = mapped_column(String(36), ForeignKey("trading_accounts.id"), nullable=False, index=True)
@@ -49,6 +55,9 @@ class Position(Base, TimestampMixin):
 class TradeRecord(Base, TimestampMixin):
     """成交记录"""
     __tablename__ = "trade_records"
+    __table_args__ = (
+        Index("ix_trade_records_account_created_at", "account_id", "created_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     account_id: Mapped[str] = mapped_column(String(36), ForeignKey("trading_accounts.id"), nullable=False, index=True)
@@ -72,6 +81,9 @@ class TradeLog(Base, TimestampMixin):
       - analysis: AI 分析文本（Markdown 格式）
     """
     __tablename__ = "trade_logs"
+    __table_args__ = (
+        Index("ix_trade_logs_account_created_at", "account_id", "created_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     account_id: Mapped[str] = mapped_column(String(36), ForeignKey("trading_accounts.id"), nullable=False, index=True)

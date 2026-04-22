@@ -1029,7 +1029,7 @@ class ResearcherService:
         acct_stmt = select(AccountModel).where(AccountModel.researcher_id == researcher_id)
         acct_result = await session.execute(acct_stmt)
         if acct_result.scalar_one_or_none() is None:
-            initial_cash = 100_000.0
+            initial_cash = 1_000_000.0
             acct = AccountModel(
                 id=f"acct_{uuid4().hex[:10]}",
                 user_id=user_id,
@@ -1140,8 +1140,7 @@ class ResearcherService:
 
         rankings: list[WorkbenchPublicRankItem] = []
         for r, acct in rows:
-            total = float(acct.total_asset) if acct else 100_000.0
-            initial = 100_000.0  # 初始资金
+            total = float(acct.total_asset) if acct else 1_000_000.0
             today_pnl = float(acct.daily_pnl) if acct else 0.0
             rankings.append(WorkbenchPublicRankItem(
                 researcher_id=r.id,

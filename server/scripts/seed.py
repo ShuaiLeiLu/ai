@@ -44,7 +44,7 @@ def _now(offset_hours: int = 0) -> datetime:
 
 
 # ── 模拟盘初始资金 ──
-INITIAL_CASH = 100_000.0
+INITIAL_CASH = 1_000_000.0
 
 # ── 种子数据定义 ──
 
@@ -321,7 +321,7 @@ async def seed(session: AsyncSession) -> None:
         )
         session.add(hire)
 
-        # 模拟交易账户（每个研究员独立，初始 10 万）
+        # 模拟交易账户（每个研究员独立，初始 100 万）
         acct = TradingAccount(
             id=_id("acct_"),
             user_id=user_id,
