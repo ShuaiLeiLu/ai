@@ -1,20 +1,19 @@
 """
-策略调度引擎 —— 读取研究员 strategy_config，执行模拟选股与调仓
+策略调度引擎 —— 读取研究员 strategy_config，执行真实行情选股与调仓
 
 核心流程（每个交易日）：
   1. 查询所有 active + 有 strategy_config 的研究员
-  2. 根据策略配置生成目标持仓池（模拟选股）
+  2. 通过 AKShare 拉取 A 股实时行情，按小市值轮动策略选股
   3. 对比当前持仓，计算调仓信号（卖出 + 买入）
-  4. 通过 async_place_order 执行交易
+  4. 使用真实行情价格撮合交易
   5. 更新研究员 today_pnl / win_rate_30d 等统计指标
 
-当前阶段使用模拟股票池（内置A股小市值标的），后续接入真实行情数据源。
+数据源：AKShare stock_zh_a_spot（新浪 A 股实时行情）
 """
 from __future__ import annotations
 
 import json
 import logging
-import random
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -26,49 +25,194 @@ from app.models.trading import Position, TradingAccount, TradeLog, TradeRecord
 
 logger = logging.getLogger(__name__)
 
-# ── 模拟股票池（小市值标的，后续替换为真实行情数据源）──
-# 格式：(代码, 名称, 模拟价格区间下限, 模拟价格区间上限)
-SIMULATED_STOCK_POOL = [
-    ("002516", "旷达科技", 4.5, 6.0),
-    ("002305", "南国置业", 2.8, 4.0),
-    ("600701", "丰华股份", 7.0, 10.0),
-    ("002260", "德奥退", 3.0, 5.0),
-    ("000557", "西部创业", 5.0, 7.5),
-    ("600209", "罗顿发展", 4.0, 6.0),
-    ("002420", "达实智能", 3.5, 5.5),
-    ("600698", "湖南天雁", 4.0, 6.5),
-    ("002071", "长城影视", 2.5, 4.0),
-    ("600733", "北汽蓝谷", 5.0, 8.0),
-    ("002147", "新光退", 2.0, 3.5),
-    ("600186", "莲花健康", 3.0, 5.0),
-    ("002427", "尤夫股份", 6.0, 9.0),
-    ("600652", "游久游戏", 5.0, 7.0),
-    ("002233", "塔牌集团", 8.0, 12.0),
-    ("000017", "利华益维", 12.0, 16.0),
-    ("002230", "科大讯飞", 35.0, 50.0),
-    ("600298", "安琪酵母", 28.0, 38.0),
-    ("002456", "欧菲光", 6.0, 9.0),
-    ("600319", "亚星化学", 5.0, 8.0),
-]
+
+# ════════════════════════════════════════════════════════════
+# 真实行情选股
+# ════════════════════════════════════════════════════════════
+
+def _fetch_realtime_quotes() -> list[dict]:
+    """通过 AKShare 获取 A 股全市场实时行情快照。
+
+    返回列表元素：{"symbol": "002516", "name": "旷达科技", "price": 5.23,
+                   "change_pct": 2.5, "amount": 12345678, "open": 5.10, "prev_close": 5.11}
+    """
+    try:
+        import akshare as ak
+        df = ak.stock_zh_a_spot()
+    except Exception:
+        logger.exception("[选股] AKShare 获取行情失败，回退空列表")
+        return []
+
+    quotes: list[dict] = []
+    for _, row in df.iterrows():
+        code_raw = str(row.get("代码", ""))
+        # 去掉交易所前缀（sh/sz/bj）
+        if code_raw.startswith(("sh", "sz", "SH", "SZ")):
+            symbol = code_raw[2:]
+        elif code_raw.startswith(("bj", "BJ")):
+            symbol = code_raw[2:]
+        else:
+            symbol = code_raw
+
+        price = _safe_float(row.get("最新价"))
+        if price <= 0:
+            continue
+
+        quotes.append({
+            "symbol": symbol,
+            "name": str(row.get("名称", "")),
+            "price": price,
+            "change_pct": _safe_float(row.get("涨跌幅")),
+            "amount": _safe_float(row.get("成交额")),
+            "open": _safe_float(row.get("今开")),
+            "prev_close": _safe_float(row.get("昨收")),
+            "volume": _safe_float(row.get("成交量")),
+        })
+    logger.info("[选股] 获取 A 股行情 %d 条", len(quotes))
+    return quotes
 
 
-def _sim_price(low: float, high: float) -> float:
-    """生成模拟价格，保留两位小数"""
-    return round(random.uniform(low, high), 2)
+def _safe_float(val, default: float = 0.0) -> float:
+    """安全转换为 float。"""
+    try:
+        import pandas as pd
+        if pd.isna(val):
+            return default
+        return float(val)
+    except (ValueError, TypeError):
+        return default
 
 
 def _generate_target_pool(strategy_config: dict, count: int = 10) -> list[dict]:
-    """根据策略配置生成目标持仓池（模拟）。
+    """根据策略配置 + 真实 A 股行情生成目标持仓池。
+
+    小市值轮动策略选股逻辑：
+      1. 过滤掉 ST/*ST/退市股、科创板(688)、北交所(8/4开头)
+      2. 过滤涨停股、跌停股（涨跌幅 >= 9.8% 或 <= -9.8%）
+      3. 过滤价格异常股（< 1 元或 > 100 元）
+      4. 过滤成交额过低股（< 500 万，流动性不足）
+      5. 按成交额升序排列（成交额小 ≈ 小市值代理因子）
+      6. 取前 stock_count 只
 
     返回列表元素：{"symbol": "002516", "name": "旷达科技", "price": 5.23}
     """
     pool_size = strategy_config.get("stock_count", count)
-    # 随机选择目标数量的股票
-    selected = random.sample(SIMULATED_STOCK_POOL, min(pool_size, len(SIMULATED_STOCK_POOL)))
-    return [
-        {"symbol": s[0], "name": s[1], "price": _sim_price(s[2], s[3])}
-        for s in selected
-    ]
+    filters = strategy_config.get("filters", {})
+
+    all_quotes = _fetch_realtime_quotes()
+    if not all_quotes:
+        logger.warning("[选股] 无法获取行情数据，返回空池")
+        return []
+
+    candidates: list[dict] = []
+    for q in all_quotes:
+        symbol = q["symbol"]
+        name = q["name"]
+        price = q["price"]
+        change_pct = q["change_pct"]
+        amount = q["amount"]
+
+        # ── 过滤规则 ──
+
+        # 排除北交所（8/4 开头的 6 位码）
+        if symbol.startswith(("8", "4")) and len(symbol) == 6:
+            continue
+
+        # 排除科创板（688 开头）
+        if filters.get("exclude_kcb", True) and symbol.startswith("688"):
+            continue
+
+        # 排除 ST / *ST / 退市股
+        if filters.get("exclude_st", True):
+            if "ST" in name or "st" in name or "退" in name:
+                continue
+
+        # 排除涨停股（涨幅 >= 9.8%）
+        if filters.get("exclude_limit_up", True) and change_pct >= 9.8:
+            continue
+
+        # 排除跌停股（跌幅 <= -9.8%）
+        if filters.get("exclude_limit_down", True) and change_pct <= -9.8:
+            continue
+
+        # 价格过滤：排除仙股和高价股
+        if price < 1.0 or price > 100.0:
+            continue
+
+        # 流动性过滤：成交额 < 500 万排除
+        if amount < 5_000_000:
+            continue
+
+        candidates.append(q)
+
+    # 按成交额升序（小成交额 ≈ 小市值代理因子）
+    candidates.sort(key=lambda x: x["amount"])
+
+    # 取前 pool_size 只
+    selected = candidates[:pool_size]
+
+    logger.info(
+        "[选股] 筛选完成：全市场 %d → 候选 %d → 选中 %d",
+        len(all_quotes), len(candidates), len(selected),
+    )
+    for s in selected:
+        logger.info(
+            "  [目标] %s %s 现价 %.2f 涨跌 %.2f%% 成交额 %.0f万",
+            s["symbol"], s["name"], s["price"], s["change_pct"], s["amount"] / 10000,
+        )
+
+    return [{"symbol": s["symbol"], "name": s["name"], "price": s["price"]} for s in selected]
+
+
+def _generate_target_pool_from_quotes(
+    strategy_config: dict, all_quotes: list[dict], count: int = 10
+) -> list[dict]:
+    """与 _generate_target_pool 相同的选股逻辑，但复用已拉取的行情数据，避免重复请求。"""
+    pool_size = strategy_config.get("stock_count", count)
+    filters = strategy_config.get("filters", {})
+
+    if not all_quotes:
+        logger.warning("[选股] 行情数据为空，返回空池")
+        return []
+
+    candidates: list[dict] = []
+    for q in all_quotes:
+        symbol = q["symbol"]
+        name = q["name"]
+        price = q["price"]
+        change_pct = q["change_pct"]
+        amount = q["amount"]
+
+        if symbol.startswith(("8", "4")) and len(symbol) == 6:
+            continue
+        if filters.get("exclude_kcb", True) and symbol.startswith("688"):
+            continue
+        if filters.get("exclude_st", True):
+            if "ST" in name or "st" in name or "退" in name:
+                continue
+        if filters.get("exclude_limit_up", True) and change_pct >= 9.8:
+            continue
+        if filters.get("exclude_limit_down", True) and change_pct <= -9.8:
+            continue
+        if price < 1.0 or price > 100.0:
+            continue
+        if amount < 5_000_000:
+            continue
+        candidates.append(q)
+
+    candidates.sort(key=lambda x: x["amount"])
+    selected = candidates[:pool_size]
+
+    logger.info(
+        "[选股] 筛选完成：全市场 %d → 候选 %d → 选中 %d",
+        len(all_quotes), len(candidates), len(selected),
+    )
+    for s in selected:
+        logger.info(
+            "  [目标] %s %s 现价 %.2f 涨跌 %.2f%% 成交额 %.0f万",
+            s["symbol"], s["name"], s["price"], s["change_pct"], s["amount"] / 10000,
+        )
+    return [{"symbol": s["symbol"], "name": s["name"], "price": s["price"]} for s in selected]
 
 
 async def execute_daily_rotation(session: AsyncSession) -> dict:
@@ -181,23 +325,38 @@ async def _execute_for_researcher(session: AsyncSession, researcher: Researcher)
     min_commission = cost_config.get("min_commission", 5)
     stop_loss = config.get("risk_control", {}).get("stop_loss", -0.10)
 
-    # 查找模拟账户
+    # 查找模拟账户（若不存在则自动创建）
     acct_stmt = select(TradingAccount).where(
         TradingAccount.researcher_id == researcher.id
     )
     acct_result = await session.execute(acct_stmt)
     account = acct_result.scalar_one_or_none()
     if not account:
-        logger.warning("[策略引擎] %s 没有模拟账户，跳过", researcher.name)
-        return 0
+        logger.info("[策略引擎] %s 没有模拟账户，自动创建（初始资金 10 万）", researcher.name)
+        initial_cash = 100_000.0
+        account = TradingAccount(
+            id=f"acct_{uuid4().hex[:10]}",
+            user_id=researcher.owner_id,
+            researcher_id=researcher.id,
+            total_asset=initial_cash,
+            available_cash=initial_cash,
+            holding_value=0.0,
+            daily_pnl=0.0,
+        )
+        session.add(account)
+        await session.flush()
 
     # 查找当前持仓
     pos_stmt = select(Position).where(Position.account_id == account.id)
     pos_result = await session.execute(pos_stmt)
     current_positions = {p.symbol: p for p in pos_result.scalars().all()}
 
+    # 拉取全市场实时行情（用于选股 + 卖出/持仓现价更新）
+    all_quotes = _fetch_realtime_quotes()
+    realtime_price_map: dict[str, float] = {q["symbol"]: q["price"] for q in all_quotes}
+
     # 生成今日目标池
-    target_pool = _generate_target_pool(config)
+    target_pool = _generate_target_pool_from_quotes(config, all_quotes)
     target_symbols = {t["symbol"] for t in target_pool}
     target_map = {t["symbol"]: t for t in target_pool}
 
@@ -222,7 +381,8 @@ async def _execute_for_researcher(session: AsyncSession, researcher: Researcher)
                     reason = f"触发止损线（当前亏损 {pnl_pct:.1%}，止损阈值 {stop_loss:.0%}）"
 
         if should_sell:
-            sell_price = round(pos.current_price * random.uniform(0.97, 1.03), 2)
+            # 使用真实行情价格卖出（若行情不可用则用持仓现价）
+            sell_price = realtime_price_map.get(symbol, pos.current_price)
             amount = sell_price * pos.quantity
             commission = max(amount * close_commission_rate, min_commission)
             tax = amount * close_tax_rate
@@ -350,12 +510,9 @@ async def _execute_for_researcher(session: AsyncSession, researcher: Researcher)
             buy_count += 1
             logger.info("  [买入] %s %s %d股 @ %.2f", target["symbol"], target["name"], max_quantity, buy_price)
 
-    # ── 第三步：更新现有持仓的现价 ──
+    # ── 第三步：更新现有持仓的现价（使用真实行情） ──
     for symbol, pos in current_positions.items():
-        if symbol in target_map:
-            new_price = target_map[symbol]["price"]
-        else:
-            new_price = round(pos.current_price * random.uniform(0.97, 1.03), 2)
+        new_price = realtime_price_map.get(symbol, target_map.get(symbol, {}).get("price", pos.current_price))
         old_pnl = pos.pnl
         pos.current_price = new_price
         pos.pnl = round((new_price - pos.cost_price) * pos.quantity, 2)

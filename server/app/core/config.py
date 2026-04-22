@@ -35,8 +35,6 @@ class Settings(BaseSettings):
         alias="DATABASE_URL",
     )
     redis_url: str = Field(default="redis://localhost:6379/2", alias="REDIS_URL")
-    celery_broker_url: str = Field(default="redis://localhost:6379/3", alias="CELERY_BROKER_URL")
-    celery_result_backend: str = Field(default="redis://localhost:6379/4", alias="CELERY_RESULT_BACKEND")
 
     frontend_url: str = Field(default="http://localhost:3000", alias="FRONTEND_URL")
     cors_origins: list[str] = Field(default_factory=lambda: ["*"], alias="CORS_ORIGINS")

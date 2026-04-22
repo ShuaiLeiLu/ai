@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "akshare>=1.18.0",
+  "apscheduler>=3.10.0,<4.0.0",
   "alembic>=1.15.1,<2.0.0",
   "asyncpg>=0.30.0,<0.31.0",
   "bcrypt>=4.0.1,<4.1.0",

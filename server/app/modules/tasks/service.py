@@ -18,7 +18,7 @@ from app.modules.tasks.schemas import (
 class TaskService:
     """任务编排领域服务。
 
-    当前执行逻辑是模拟执行，后续会由 Celery worker 真正消费任务。
+    当前执行逻辑是模拟执行，后续会接入真实任务调度。
     """
 
     def __init__(self) -> None:

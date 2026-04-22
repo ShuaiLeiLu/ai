@@ -2,21 +2,19 @@
 模拟交易引擎
 
 功能：
-  - 模拟账户管理（初始 100 万可用资金）
+  - 模拟账户管理（初始 10 万可用资金）
   - 下单撮合（买入扣减资金增加持仓 / 卖出释放资金减少持仓）
   - 持仓盈亏实时计算
   - 账户资产自动更新
-  - 双模式：内存 mock + async 数据库
 
 撮合规则（简化版）：
   - 限价单即时成交（模拟环境，不做竞价撮合）
   - 买入：可用资金 >= 成交金额
   - 卖出：持仓数量 >= 卖出数量
-  - 手续费暂不计算
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from fastapi import HTTPException, status
@@ -36,174 +34,7 @@ from app.repositories.trading_repo import PositionRepository, TradingAccountRepo
 
 
 class TradingService:
-    """模拟交易引擎 —— 内存撮合 + 数据库持久化双模式。"""
-
-    def __init__(self) -> None:
-        now = datetime.now(tz=UTC)
-        # ── 内存 mock 数据 ──
-        self._account = TradingAccount(
-            account_id="sim_account_1",
-            total_asset=1004270.0,
-            available_cash=706120.0,
-            holding_value=298150.0,
-            daily_pnl=2270.0,
-        )
-        self._positions: dict[str, PositionItem] = {
-            "300183": PositionItem(
-                symbol="300183",
-                name="东软载波",
-                quantity=6700,
-                cost_price=14.88,
-                current_price=15.48,
-                pnl=4020.0,
-            ),
-            "002533": PositionItem(
-                symbol="002533",
-                name="金杯电工",
-                quantity=7200,
-                cost_price=13.75,
-                current_price=13.67,
-                pnl=-576.0,
-            ),
-        }
-        self._records: list[TradeRecord] = [
-            TradeRecord(
-                trade_id="trd_1",
-                symbol="300183",
-                side="buy",
-                quantity=1200,
-                price=15.12,
-                amount=1200 * 15.12,
-                created_at=now - timedelta(hours=3),
-            )
-        ]
-
-    # ──────────── 内存 mock 模式 ────────────
-
-    def get_account(self) -> TradingAccount:
-        """获取账户概况"""
-        return self._account
-
-    def list_positions(self) -> list[PositionItem]:
-        """持仓列表（按盈亏绝对值排序）"""
-        return sorted(
-            self._positions.values(),
-            key=lambda p: (abs(p.pnl), p.pnl, p.symbol),
-            reverse=True,
-        )
-
-    def list_records(self, limit: int = 20) -> list[TradeRecord]:
-        """成交记录（按时间降序）"""
-        sorted_records = sorted(
-            self._records,
-            key=lambda r: (r.created_at, r.trade_id),
-            reverse=True,
-        )
-        return sorted_records[:limit]
-
-    def place_order(self, payload: PlaceOrderRequest) -> PlaceOrderResponse:
-        """模拟下单撮合（内存模式）
-
-        买入：检查资金 → 扣减资金 → 增加/新建持仓
-        卖出：检查持仓 → 释放资金 → 减少/清除持仓
-        """
-        amount = payload.price * payload.quantity
-        now = datetime.now(tz=UTC)
-        trade_id = f"trd_{uuid4().hex[:8]}"
-
-        if payload.side == "buy":
-            # 检查资金
-            if self._account.available_cash < amount:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"可用资金不足：需要 {amount:.2f}，当前 {self._account.available_cash:.2f}",
-                )
-            # 扣减资金
-            self._account = TradingAccount(
-                account_id=self._account.account_id,
-                total_asset=self._account.total_asset,
-                available_cash=self._account.available_cash - amount,
-                holding_value=self._account.holding_value + amount,
-                daily_pnl=self._account.daily_pnl,
-            )
-            # 更新持仓
-            existing = self._positions.get(payload.symbol)
-            if existing:
-                new_qty = existing.quantity + payload.quantity
-                new_cost = (existing.cost_price * existing.quantity + amount) / new_qty
-                self._positions[payload.symbol] = PositionItem(
-                    symbol=payload.symbol,
-                    name=payload.name or existing.name,
-                    quantity=new_qty,
-                    cost_price=round(new_cost, 4),
-                    current_price=payload.price,
-                    pnl=round((payload.price - new_cost) * new_qty, 2),
-                )
-            else:
-                self._positions[payload.symbol] = PositionItem(
-                    symbol=payload.symbol,
-                    name=payload.name or payload.symbol,
-                    quantity=payload.quantity,
-                    cost_price=payload.price,
-                    current_price=payload.price,
-                    pnl=0.0,
-                )
-            message = f"买入成功：{payload.symbol} {payload.quantity}股 @ {payload.price}"
-
-        else:  # sell
-            existing = self._positions.get(payload.symbol)
-            if not existing or existing.quantity < payload.quantity:
-                available = existing.quantity if existing else 0
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"持仓不足：可卖 {available} 股",
-                )
-            # 释放资金
-            self._account = TradingAccount(
-                account_id=self._account.account_id,
-                total_asset=self._account.total_asset + (payload.price - existing.cost_price) * payload.quantity,
-                available_cash=self._account.available_cash + amount,
-                holding_value=self._account.holding_value - existing.cost_price * payload.quantity,
-                daily_pnl=self._account.daily_pnl + (payload.price - existing.cost_price) * payload.quantity,
-            )
-            # 更新持仓
-            new_qty = existing.quantity - payload.quantity
-            if new_qty == 0:
-                del self._positions[payload.symbol]
-            else:
-                self._positions[payload.symbol] = PositionItem(
-                    symbol=payload.symbol,
-                    name=existing.name,
-                    quantity=new_qty,
-                    cost_price=existing.cost_price,
-                    current_price=payload.price,
-                    pnl=round((payload.price - existing.cost_price) * new_qty, 2),
-                )
-            message = f"卖出成功：{payload.symbol} {payload.quantity}股 @ {payload.price}"
-
-        # 记录成交
-        record = TradeRecord(
-            trade_id=trade_id,
-            symbol=payload.symbol,
-            side=payload.side,
-            quantity=payload.quantity,
-            price=payload.price,
-            amount=amount,
-            created_at=now,
-        )
-        self._records.append(record)
-
-        return PlaceOrderResponse(
-            trade_id=trade_id,
-            symbol=payload.symbol,
-            side=payload.side,
-            quantity=payload.quantity,
-            price=payload.price,
-            amount=amount,
-            message=message,
-        )
-
-    # ──────────── 数据库模式（async） ────────────
+    """模拟交易引擎 —— 数据库持久化模式。"""
 
     async def async_get_account(
         self, session: AsyncSession, user_id: str, researcher_id: str

@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.celery_factory import CeleryFactory
 from app.core.config import Settings, get_settings
 from app.core.database_factory import DatabaseFactory
 from app.core.redis_factory import RedisFactory
@@ -22,11 +21,9 @@ class AppContainer:
         self.settings = settings
         self.database = DatabaseFactory(settings=settings)
         self.redis = RedisFactory(settings=settings)
-        self.celery = CeleryFactory(settings=settings)
 
     async def startup(self) -> None:
         self.database.initialize()
-        self.celery.get_app()
         # 预热数据库连接池：启动时建立首个连接，避免首次请求等待
         try:
             async with self.database.session_factory() as session:
@@ -38,7 +35,6 @@ class AppContainer:
     async def shutdown(self) -> None:
         await self.database.shutdown()
         await self.redis.shutdown()
-        await self.celery.shutdown()
 
     async def session_dependency(self) -> AsyncIterator[AsyncSession]:
         async for session in self.database.session_dependency():

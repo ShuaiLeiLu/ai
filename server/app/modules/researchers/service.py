@@ -1004,7 +1004,9 @@ class ResearcherService:
         )
 
     async def async_hire(self, session: AsyncSession, user_id: str, researcher_id: str) -> None:
-        """在数据库记录雇佣关系"""
+        """在数据库记录雇佣关系，并自动创建模拟交易账户（如尚不存在）"""
+        from app.models.trading import TradingAccount as AccountModel
+
         r_repo = ResearcherRepository(session)
         r = await r_repo.get_by_id(researcher_id)
         if not r:
@@ -1022,6 +1024,22 @@ class ResearcherService:
             status="hired",
         )
         await h_repo.create(hire)
+
+        # 自动创建模拟交易账户（若该研究员还没有账户）
+        acct_stmt = select(AccountModel).where(AccountModel.researcher_id == researcher_id)
+        acct_result = await session.execute(acct_stmt)
+        if acct_result.scalar_one_or_none() is None:
+            initial_cash = 100_000.0
+            acct = AccountModel(
+                id=f"acct_{uuid4().hex[:10]}",
+                user_id=user_id,
+                researcher_id=researcher_id,
+                total_asset=initial_cash,
+                available_cash=initial_cash,
+                holding_value=0.0,
+                daily_pnl=0.0,
+            )
+            session.add(acct)
 
         # 更新雇佣计数
         await r_repo.update(r, hire_count=r.hire_count + 1, status="active")

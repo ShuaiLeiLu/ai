@@ -465,6 +465,12 @@ function PortfolioSection({ researcher }: { researcher: HiredResearcher }) {
           <span className="text-xs text-slate-400">当前持仓</span>
           <span className="text-xs text-slate-400">{currentMonth}</span>
         </div>
+        <Link
+          href={routes.tradingDetail(rid)}
+          className="text-xs text-brand-500 hover:text-brand-600 flex items-center gap-0.5 transition-colors"
+        >
+          查看详情 <RightOutlined style={{ fontSize: 10 }} />
+        </Link>
       </div>
 
       {/* 加载态 */}
