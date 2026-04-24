@@ -21,6 +21,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.container import get_container
 from app.integrations.akshare.client import (
     StockQuote,
     get_stock_quote_by_symbols,
@@ -32,6 +33,7 @@ from app.models.trading import Position as PositionModel
 from app.models.trading import TradeLog as TradeLogModel
 from app.models.trading import TradeRecord as RecordModel
 from app.models.trading import TradingAccount as AccountModel
+from app.modules.trading.quote_cache import get_cached_quotes, get_or_refresh_cached_quotes, refresh_cached_quotes
 from app.modules.trading.reflection_skill import TradingReflectionSkill
 from app.modules.trading.rqalpha_adapter import (
     ORDER_STATUS_FILLED,
@@ -52,8 +54,8 @@ from app.modules.trading.schemas import (
     TradeRecord,
     TradingAccount,
     TradingAllData,
+    TradingPortfolioData,
     TradingStats,
-    TradingStreamSnapshot,
 )
 from app.repositories.trading_repo import PositionRepository, TradingAccountRepository
 
@@ -213,11 +215,19 @@ class TradingService:
         """批量获取实时行情。
 
         - `cache_only=True`：只读本地缓存，不触发外部行情请求
-        - `cache_only=False`：按 symbol 补齐缺失行情，适合 SSE 等实时流
+        - `cache_only=False`：按 symbol 补齐缺失行情，适合下单等主动刷新场景
         """
         normalized_symbols = sorted({symbol for symbol in symbols if symbol})
         if not normalized_symbols:
             return {}
+        try:
+            redis = get_container().redis.get_client()
+            if cache_only:
+                return await get_cached_quotes(redis, normalized_symbols)
+            return await get_or_refresh_cached_quotes(redis, normalized_symbols)
+        except Exception:
+            if cache_only:
+                return {}
         try:
             loader = peek_stock_quote_by_symbols if cache_only else get_stock_quote_by_symbols
             return await run_sync(loader, normalized_symbols)
@@ -433,7 +443,7 @@ class TradingService:
     ) -> None:
         """根据行情重算账户汇总。
 
-        默认走缓存快路径；SSE 场景可显式要求走实时行情。
+        默认走缓存快路径；下单等主动刷新场景可显式要求走实时行情。
         """
         repo = PositionRepository(session)
         positions = await repo.list_by_account(account.id)
@@ -470,32 +480,6 @@ class TradingService:
             else:
                 realized_daily_pnl = -sum(float(row.commission or 0.0) for row in today_records)
         account.daily_pnl = round(realized_daily_pnl + floating_daily_pnl, 2)
-
-    async def async_get_stream_snapshot(
-        self,
-        session: AsyncSession,
-        user_id: str,
-        researcher_id: str,
-        *,
-        cache_only: bool = False,
-    ) -> TradingStreamSnapshot:
-        """构建 SSE 推送用的交易实时快照。"""
-        account = await self._resolve_account_model(session, user_id, researcher_id)
-        await self._refresh_account_snapshot(session, account, cache_only=cache_only)
-        positions = await self.async_list_positions(session, account.id, cache_only=cache_only)
-        await session.flush()
-        return TradingStreamSnapshot(
-            generated_at=datetime.now(),
-            account=TradingAccount(
-                account_id=account.id,
-                initial_capital=self._infer_initial_capital(account),
-                total_asset=float(account.total_asset),
-                available_cash=float(account.available_cash),
-                holding_value=float(account.holding_value),
-                daily_pnl=float(account.daily_pnl),
-            ),
-            positions=positions,
-        )
 
     async def async_get_account(
         self, session: AsyncSession, user_id: str, researcher_id: str
@@ -639,12 +623,12 @@ class TradingService:
         acc = await self._resolve_account_model(session, user_id, researcher_id)
         account_id = acc.id
 
-        # 1. 持仓列表 + 实时行情更新（聚合端点是唯一请求，允许触发行情拉取）
+        # 1. 持仓列表 + Redis 行情缓存；页面请求不再同步访问外部行情源。
         repo = PositionRepository(session)
         positions = await repo.list_by_account(account_id)
         today_buy_quantities = await self._load_today_buy_quantities(session, account_id)
         quote_map = await self._load_realtime_quotes(
-            [p.symbol for p in positions], cache_only=False,
+            [p.symbol for p in positions], cache_only=True,
         )
         _, floating_daily_pnl = self._apply_quotes_to_positions(positions, quote_map)
 
@@ -714,6 +698,75 @@ class TradingService:
             logs=log_items,
         )
 
+    async def async_get_portfolio(
+        self,
+        session: AsyncSession,
+        user_id: str,
+        researcher_id: str,
+    ) -> TradingPortfolioData:
+        """返回工作台所需的轻量模拟盘数据，只包含账户和持仓。"""
+        acc = await self._resolve_account_model(session, user_id, researcher_id)
+        account_id = acc.id
+
+        repo = PositionRepository(session)
+        positions = await repo.list_by_account(account_id)
+        today_buy_quantities = await self._load_today_buy_quantities(session, account_id)
+        quote_map = await self._load_realtime_quotes(
+            [position.symbol for position in positions],
+            cache_only=True,
+        )
+        _, floating_daily_pnl = self._apply_quotes_to_positions(positions, quote_map)
+
+        position_items = self._sort_positions([
+            PositionItem(
+                symbol=position.symbol,
+                name=position.name,
+                quantity=position.quantity,
+                sellable_quantity=compute_sellable_quantity(
+                    int(position.quantity),
+                    today_buy_quantities.get(position.symbol, 0),
+                ),
+                cost_price=float(position.cost_price),
+                current_price=float(position.current_price),
+                pnl=float(position.pnl),
+            )
+            for position in positions
+        ])
+
+        today = datetime.now().date()
+        start_at = datetime.combine(today, datetime.min.time())
+        end_at = start_at + timedelta(days=1)
+        today_records = await self._load_account_records_in_range(
+            session,
+            account_id,
+            start_at=start_at,
+            end_at=end_at,
+        )
+        if any(record.side == "sell" for record in today_records):
+            _, replay = await self._load_replay(session, account_id)
+            realized_daily_pnl = sum(
+                (
+                    -record.commission
+                    if record.side == "buy"
+                    else float(record.realized_pnl or 0.0)
+                )
+                for record in replay.record_map.values()
+                if record.created_at.date() == today
+            )
+        else:
+            realized_daily_pnl = -sum(float(record.commission or 0.0) for record in today_records)
+
+        holding_value = sum(float(position.current_price) * position.quantity for position in positions)
+        account_data = TradingAccount(
+            account_id=acc.id,
+            initial_capital=self._infer_initial_capital(acc),
+            total_asset=round(float(acc.available_cash) + holding_value, 2),
+            available_cash=float(acc.available_cash),
+            holding_value=round(holding_value, 2),
+            daily_pnl=round(realized_daily_pnl + floating_daily_pnl, 2),
+        )
+        return TradingPortfolioData(account=account_data, positions=position_items)
+
     async def async_get_stats(
         self, session: AsyncSession, account_id: str, initial_capital: float | None = None
     ) -> TradingStats:
@@ -732,7 +785,7 @@ class TradingService:
             await self._refresh_account_snapshot(session, account, cache_only=True)
             total_asset = float(account.total_asset)
 
-        records = await self._load_account_records(session, account_id)
+        records, replay = await self._load_replay(session, account_id)
         if not records:
             data = TradingStats(
                 initial_capital=initial_capital,
@@ -758,11 +811,9 @@ class TradingService:
             self._cache_set(cache_key, data, STATS_CACHE_TTL_SECONDS)
             return data
 
-        replay = self._replay_records(records, initial_capital=initial_capital)
         daily_equity = dict(replay.daily_equity)
         today_str = datetime.now().date().strftime("%Y-%m-%d")
-        if today_str not in daily_equity:
-            daily_equity[today_str] = round(total_asset, 2)
+        daily_equity[today_str] = round(total_asset, 2)
 
         sorted_dates = sorted(daily_equity.keys())
         equity_curve = [EquityPoint(date=date, equity=round(daily_equity[date], 2)) for date in sorted_dates]
@@ -987,6 +1038,12 @@ class TradingService:
             )
         )
         await session.flush()
+
+        try:
+            redis = get_container().redis.get_client()
+            await refresh_cached_quotes(redis, [payload.symbol])
+        except Exception:
+            pass
 
         await self._refresh_account_snapshot(session, acc)
         positions = await pos_repo.list_by_account(acc.id)

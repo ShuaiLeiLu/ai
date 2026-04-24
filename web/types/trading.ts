@@ -88,8 +88,7 @@ export interface TradingAllData {
   logs: TradeLogItem[];
 }
 
-export interface TradingStreamSnapshot {
-  generated_at: string;
+export interface TradingPortfolioData {
   account: TradingAccount;
   positions: PositionItem[];
 }

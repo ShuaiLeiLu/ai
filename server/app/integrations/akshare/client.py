@@ -22,6 +22,7 @@ AKShare 数据源统一封装
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -32,6 +33,8 @@ from datetime import date, datetime
 from functools import partial
 from threading import Lock
 from typing import Any, Callable, TypeVar
+from urllib.parse import urlencode
+from urllib.request import ProxyHandler, Request, build_opener
 
 import pandas as pd
 
@@ -49,6 +52,7 @@ _AKSHARE_PROXY_ENV_KEYS = (
     "https_proxy",
     "all_proxy",
 )
+_no_proxy_url_opener = build_opener(ProxyHandler({}))
 
 
 # ════════════════════════════════════════════════════════════
@@ -79,6 +83,25 @@ def _without_proxy_env() -> Any:
                 os.environ[key] = value
 
 
+@contextmanager
+def _without_requests_proxy() -> Any:
+    """Force requests calls made by AKShare to ignore environment proxies."""
+    import requests
+
+    original_merge = requests.sessions.Session.merge_environment_settings
+
+    def merge_without_proxy(self: Any, url: str, proxies: Any, stream: Any, verify: Any, cert: Any) -> dict[str, Any]:
+        settings = original_merge(self, url, proxies, stream, verify, cert)
+        settings["proxies"] = {}
+        return settings
+
+    requests.sessions.Session.merge_environment_settings = merge_without_proxy
+    try:
+        yield
+    finally:
+        requests.sessions.Session.merge_environment_settings = original_merge
+
+
 def call_akshare_api(api_name: str, /, *args: Any, **kwargs: Any) -> Any:
     """Call an AKShare API while bypassing broken shell proxy settings."""
     import akshare as ak
@@ -86,7 +109,8 @@ def call_akshare_api(api_name: str, /, *args: Any, **kwargs: Any) -> Any:
     api = getattr(ak, api_name)
     with _akshare_proxy_guard:
         with _without_proxy_env():
-            return api(*args, **kwargs)
+            with _without_requests_proxy():
+                return api(*args, **kwargs)
 
 
 # ════════════════════════════════════════════════════════════
@@ -304,6 +328,54 @@ def _stock_quote_cache_key(symbol: str) -> str:
     return f"stock_quote:{symbol}"
 
 
+def _eastmoney_secid(symbol: str) -> str:
+    if symbol.startswith(("6", "9")):
+        return f"1.{symbol}"
+    return f"0.{symbol}"
+
+
+def _fetch_stock_quotes_eastmoney(symbols: list[str]) -> dict[str, StockQuote]:
+    if not symbols:
+        return {}
+
+    fields = "f2,f3,f4,f5,f6,f12,f14,f15,f16,f17,f18"
+    params = urlencode({
+        "fltt": "2",
+        "fields": fields,
+        "secids": ",".join(_eastmoney_secid(symbol) for symbol in symbols),
+    })
+    url = f"https://push2.eastmoney.com/api/qt/ulist.np/get?{params}"
+    request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with _akshare_proxy_guard:
+        with _without_proxy_env():
+            response = _no_proxy_url_opener.open(request, timeout=8)
+            payload = json.loads(response.read().decode("utf-8"))
+
+    quotes: dict[str, StockQuote] = {}
+    for row in (payload.get("data") or {}).get("diff") or []:
+        symbol = _safe_str(row.get("f12"))
+        price = _safe_float(row.get("f2"))
+        if not symbol or price <= 0:
+            continue
+        quote = StockQuote(
+            symbol=symbol,
+            name=_safe_str(row.get("f14"), symbol),
+            price=price,
+            change=_safe_float(row.get("f4")),
+            change_pct=_safe_float(row.get("f3")),
+            open=_safe_float(row.get("f17")),
+            high=_safe_float(row.get("f15")),
+            low=_safe_float(row.get("f16")),
+            prev_close=_safe_float(row.get("f18")),
+            volume=_safe_float(row.get("f5")),
+            amount=_safe_float(row.get("f6")),
+            timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        )
+        _cache.set(_stock_quote_cache_key(symbol), quote, CACHE_TTL_REALTIME)
+        quotes[symbol] = quote
+    return quotes
+
+
 def _get_stock_quote_lock(symbol: str) -> Lock:
     with _stock_quote_locks_guard:
         lock = _stock_quote_locks.get(symbol)
@@ -429,14 +501,23 @@ def get_stock_quote_by_symbols(symbols: list[str]) -> dict[str, StockQuote]:
     """按股票代码批量获取行情，返回 {代码: 行情} 字典。
 
     交易模块只需要当前持仓的少量股票，不应该为此触发全市场行情拉取。
-    这里改为按 symbol 拉取，并对每只股票做 15 秒缓存。
+    这里使用东方财富批量接口，并对每只股票做 15 秒缓存。
     """
     normalized_symbols = sorted({symbol for symbol in symbols if symbol})
     quotes: dict[str, StockQuote] = {}
+    missing_symbols: list[str] = []
     for symbol in normalized_symbols:
-        quote = _fetch_stock_quote(symbol)
+        quote = _peek_stock_quote(symbol)
         if quote is not None:
             quotes[symbol] = quote
+        else:
+            missing_symbols.append(symbol)
+
+    if missing_symbols:
+        try:
+            quotes.update(_fetch_stock_quotes_eastmoney(missing_symbols))
+        except Exception:
+            logger.exception("批量获取个股实时行情失败：%s", ",".join(missing_symbols))
     return quotes
 
 

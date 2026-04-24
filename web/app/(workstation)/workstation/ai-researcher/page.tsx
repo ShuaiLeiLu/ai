@@ -11,7 +11,7 @@
  *  - useHiredResearchers()  已雇佣研究员列表
  *  - useHotDocuments()      热门研究文档
  *  - usePublicRank()        公开排行榜
- *  - useTradingAll()        模拟账户聚合快照
+ *  - useTradingPortfolio()  模拟账户轻量快照
  */
 'use client';
 
@@ -43,10 +43,7 @@ import {
 } from '@ant-design/icons';
 
 import { useHiredResearchers, useHotDocuments, usePublicRank } from '@/features/researcher-workbench/hooks';
-import {
-  useTradingAll,
-  useTradingRealtimeStream,
-} from '@/features/trading/hooks';
+import { useTradingPortfolio } from '@/features/trading/hooks';
 import { routes } from '@/lib/constants/routes';
 import { useUserSessionStore } from '@/stores/user-session.store';
 import type { HiredResearcher, HotDocument, PublicRankItem, RankSortBy } from '@/types/researcher-workbench';
@@ -444,8 +441,7 @@ function LatestDocuments({
  */
 function PortfolioSection({ researcher }: { researcher: HiredResearcher }) {
   const rid = researcher.researcher_id;
-  const realtime = useTradingRealtimeStream(rid);
-  const snapshotQuery = useTradingAll(rid);
+  const snapshotQuery = useTradingPortfolio(rid);
 
   const loading = snapshotQuery.isLoading && !snapshotQuery.data;
   const acct = snapshotQuery.data?.account;
@@ -468,22 +464,8 @@ function PortfolioSection({ researcher }: { researcher: HiredResearcher }) {
           <span className="text-xs text-slate-400">当前持仓</span>
           <span className="text-xs text-slate-400">{currentMonth}</span>
           <span className="flex items-center gap-1.5 text-xs text-slate-400">
-            <span className={`inline-block h-2 w-2 rounded-full ${
-              realtime.status === 'live'
-                ? 'bg-emerald-500'
-                : realtime.status === 'connecting'
-                  ? 'bg-amber-400'
-                  : realtime.status === 'error'
-                    ? 'bg-rose-500'
-                    : 'bg-slate-300'
-            }`} />
-            {realtime.status === 'live'
-              ? '实时更新中'
-              : realtime.status === 'connecting'
-                ? '连接中'
-                : realtime.status === 'error'
-                  ? '重连中'
-                  : '未连接'}
+            <span className="inline-block h-2 w-2 rounded-full bg-slate-300" />
+            实时连接已关闭
           </span>
         </div>
         <Link

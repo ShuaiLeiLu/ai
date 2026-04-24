@@ -3,7 +3,6 @@ LLM 客户端 —— 基于 httpx 实现 OpenAI 兼容的聊天补全
 
 功能：
   - chat(): 一次性返回完整回复
-  - chat_stream(): SSE 流式输出，逐 token yield
   - 支持 OpenAI / DeepSeek / Qwen / 月之暗面等兼容 API
   - 自动重试和超时处理
 
@@ -13,9 +12,7 @@ LLM 客户端 —— 基于 httpx 实现 OpenAI 兼容的聊天补全
 """
 from __future__ import annotations
 
-import json
 import logging
-from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
 import httpx
@@ -59,7 +56,6 @@ class LLMConfig:
 class LLMClient:
     """OpenAI 兼容的 LLM 聊天客户端
 
-    支持一次性返回和 SSE 流式输出两种模式。
     当 base_url 或 api_key 未配置时，直接报错，由上层决定如何处理错误。
     """
 
@@ -132,51 +128,6 @@ class LLMClient:
             raise
         except Exception as e:
             logger.error("LLM 请求失败: %s", e)
-            raise
-
-    # ── SSE 流式输出 ──
-
-    async def chat_stream(
-        self,
-        messages: list[LLMMessage],
-        *,
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-    ) -> AsyncIterator[str]:
-        """发送聊天请求，以 SSE 流式逐 token 返回
-        """
-        if not self.is_configured:
-            logger.warning("LLM 未配置")
-            raise RuntimeError("LLM 服务未配置")
-
-        client = await self._get_client()
-        payload = self._build_payload(
-            messages, stream=True, temperature=temperature, max_tokens=max_tokens
-        )
-
-        try:
-            async with client.stream("POST", "/v1/chat/completions", json=payload) as resp:
-                resp.raise_for_status()
-                async for line in resp.aiter_lines():
-                    # SSE 格式：data: {...}
-                    if not line.startswith("data: "):
-                        continue
-                    data_str = line[6:]  # 去掉 "data: " 前缀
-                    if data_str.strip() == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(data_str)
-                        delta = chunk["choices"][0].get("delta", {})
-                        content = delta.get("content", "")
-                        if content:
-                            yield content
-                    except (json.JSONDecodeError, KeyError, IndexError):
-                        continue
-        except httpx.HTTPStatusError as e:
-            logger.error("LLM 流式 API 返回错误: %s", e.response.status_code)
-            raise
-        except Exception as e:
-            logger.error("LLM 流式请求失败: %s", e)
             raise
 
     # ── 资源清理 ──

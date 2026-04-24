@@ -15,8 +15,10 @@ from datetime import datetime as dt, timedelta, time
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from app.core.database_factory import DatabaseFactory
+from app.core.redis_factory import RedisFactory
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +88,37 @@ async def _reset_daily_pnl(db: DatabaseFactory) -> None:
         logger.exception("[调度器] 重置 daily_pnl 异常")
 
 
-def start_scheduler(db: DatabaseFactory) -> AsyncIOScheduler:
+async def _refresh_trading_quotes(db: DatabaseFactory, redis_factory: RedisFactory) -> None:
+    """刷新当前持仓行情缓存，并用缓存结果更新模拟盘快照。"""
+    from sqlalchemy import select
+
+    from app.models.trading import Position, TradingAccount
+    from app.modules.trading.quote_cache import refresh_cached_quotes
+    from app.modules.trading.service import TradingService
+
+    try:
+        async with db.session_factory() as session:
+            symbol_result = await session.execute(
+                select(Position.symbol).where(Position.quantity > 0).distinct()
+            )
+            symbols = [symbol for symbol in symbol_result.scalars().all() if symbol]
+            if not symbols:
+                return
+
+            redis = redis_factory.get_client()
+            await refresh_cached_quotes(redis, symbols)
+
+            service = TradingService()
+            account_result = await session.execute(select(TradingAccount))
+            for account in account_result.scalars().all():
+                await service._refresh_account_snapshot(session, account, cache_only=True)
+            await session.commit()
+            logger.info("[调度器] 行情缓存刷新完成：%d 只股票", len(symbols))
+    except Exception:
+        logger.exception("[调度器] 行情缓存刷新异常")
+
+
+def start_scheduler(db: DatabaseFactory, redis: RedisFactory | None = None) -> AsyncIOScheduler:
     """启动策略调度器，返回 scheduler 实例"""
     global _scheduler
 
@@ -124,6 +156,28 @@ def start_scheduler(db: DatabaseFactory) -> AsyncIOScheduler:
         name="涨停打开检查",
         replace_existing=True,
     )
+
+    if redis is not None:
+        _scheduler.add_job(
+            _refresh_trading_quotes,
+            trigger=IntervalTrigger(seconds=60),
+            args=[db, redis],
+            id="refresh_trading_quotes",
+            name="刷新模拟盘行情缓存",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        _scheduler.add_job(
+            _refresh_trading_quotes,
+            trigger="date",
+            run_date=dt.now() + timedelta(seconds=3),
+            args=[db, redis],
+            id="initial_trading_quote_refresh",
+            name="启动后首次刷新模拟盘行情缓存",
+            replace_existing=True,
+            max_instances=1,
+        )
 
     # 启动后延迟 5 秒执行一次调仓（仅交易时段内生效，非交易时段自动跳过）
     if _is_trading_hours():

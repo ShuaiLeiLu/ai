@@ -11,16 +11,11 @@
 """
 from __future__ import annotations
 
-import asyncio
-import json
-
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_optional_session
-from app.core.container import get_container
-from app.core.security import extract_user_id_from_token, get_current_user_id
+from app.core.security import get_current_user_id
 from app.modules.trading.schemas import (
     PlaceOrderRequest,
     PlaceOrderResponse,
@@ -29,18 +24,14 @@ from app.modules.trading.schemas import (
     TradeRecord,
     TradingAccount,
     TradingAllData,
-    TradingStreamSnapshot,
+    TradingPortfolioData,
     TradingStats,
 )
 from app.modules.trading.service import TradingService
 from app.schemas.common import ApiResponse, ListResponse
-from app.streams.sse import create_sse_response
 
 router = APIRouter(prefix="/trading", tags=["trading"])
 service = TradingService()
-
-STREAM_INTERVAL_SECONDS = 15
-_stream_bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def _empty_account() -> TradingAccount:
@@ -56,6 +47,10 @@ def _empty_account() -> TradingAccount:
 
 def _empty_all_data() -> TradingAllData:
     return TradingAllData(account=_empty_account(), positions=[], records=[], logs=[])
+
+
+def _empty_portfolio_data() -> TradingPortfolioData:
+    return TradingPortfolioData(account=_empty_account(), positions=[])
 
 
 def _empty_stats() -> TradingStats:
@@ -97,6 +92,19 @@ async def trading_all(
     if not session or not researcher_id:
         return ApiResponse(data=_empty_all_data())
     data = await service.async_get_all(session, user_id, researcher_id)
+    return ApiResponse(data=data)
+
+
+@router.get("/portfolio")
+async def trading_portfolio(
+    researcher_id: str = Query(default="", description="研究员ID"),
+    user_id: str = Depends(get_current_user_id),
+    session: AsyncSession | None = Depends(get_optional_session),
+) -> ApiResponse[TradingPortfolioData]:
+    """模拟盘轻量组合接口 —— 只返回 account + positions。"""
+    if not session or not researcher_id:
+        return ApiResponse(data=_empty_portfolio_data())
+    data = await service.async_get_portfolio(session, user_id, researcher_id)
     return ApiResponse(data=data)
 
 
@@ -168,49 +176,6 @@ async def trading_stats(
     account_id = await service.async_resolve_account_id(session, user_id, researcher_id)
     stats = await service.async_get_stats(session, account_id)
     return ApiResponse(data=stats)
-
-
-@router.get("/stream")
-async def trading_stream(
-    researcher_id: str = Query(..., description="研究员ID"),
-    access_token: str | None = Query(default=None, description="SSE 场景下的 access token"),
-    credentials: HTTPAuthorizationCredentials | None = Depends(_stream_bearer_scheme),
-):
-    """交易实时快照流（SSE）。
-
-    说明：
-    - EventSource 无法稳定携带 Authorization 头，因此允许通过 query 传 access_token。
-    - 若未传 access_token，则沿用当前 header 鉴权逻辑。
-    """
-    token = access_token or (credentials.credentials if credentials else None)
-    if not token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="缺少访问令牌")
-    resolved_user_id = extract_user_id_from_token(token)
-
-    session_factory = get_container().database.session_factory
-
-    async def _event_generator():
-        while True:
-            try:
-                async with session_factory() as session:
-                    snapshot = await service.async_get_stream_snapshot(
-                        session=session,
-                        user_id=resolved_user_id,
-                        researcher_id=researcher_id,
-                        cache_only=False,
-                    )
-                    yield {
-                        "event": "snapshot",
-                        "data": snapshot.model_dump_json(),
-                    }
-            except Exception as exc:
-                yield {
-                    "event": "error",
-                    "data": json.dumps({"detail": str(exc)}, ensure_ascii=False),
-                }
-            await asyncio.sleep(STREAM_INTERVAL_SECONDS)
-
-    return create_sse_response(_event_generator())
 
 
 @router.post("/execute-strategy")

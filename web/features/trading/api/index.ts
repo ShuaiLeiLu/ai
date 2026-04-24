@@ -8,7 +8,7 @@
  */
 import { http } from '@/lib/request/http-client';
 import { ApiResponse, ListResponse } from '@/types/api';
-import { PositionItem, TradeLogItem, TradeRecord, TradingAccount, TradingAllData, TradingStats } from '@/types/trading';
+import { PositionItem, TradeLogItem, TradeRecord, TradingAccount, TradingAllData, TradingPortfolioData, TradingStats } from '@/types/trading';
 
 const API_BASE = '/trading';
 
@@ -53,3 +53,8 @@ export const getTradingAll = async (researcherId?: string): Promise<TradingAllDa
   return response.data;
 };
 
+/** 轻量组合接口 —— 只获取 account + positions */
+export const getTradingPortfolio = async (researcherId?: string): Promise<TradingPortfolioData> => {
+  const response = await http<ApiResponse<TradingPortfolioData>>(`${API_BASE}/portfolio${withRid(researcherId)}`);
+  return response.data;
+};

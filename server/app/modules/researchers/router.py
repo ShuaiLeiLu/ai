@@ -6,11 +6,7 @@
 """
 from __future__ import annotations
 
-import json
-from collections.abc import AsyncIterator
-
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_optional_session
@@ -263,58 +259,6 @@ async def test_chat(
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="数据库不可用")
     data = await service.async_test_chat(session=session, researcher_id=researcher_id, question=payload.question)
     return ApiResponse(data=data)
-
-
-@router.post("/{researcher_id}/test-chat/stream")
-async def test_chat_stream(
-    researcher_id: str,
-    payload: ResearcherTestChatRequest,
-    session: AsyncSession | None = Depends(get_optional_session),
-) -> StreamingResponse:
-    """流式测试对话 —— SSE 逐 token 返回
-
-    前端通过 EventSource 或 fetch + ReadableStream 消费。
-    每个 SSE 事件格式：data: {"token": "..."}
-    结束标记：data: [DONE]
-    """
-    from app.integrations.llm.client import LLMMessage as Msg, get_llm_client
-
-    if not session:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="数据库不可用")
-
-    detail = await service.async_get_researcher(session, researcher_id)
-
-    # 构建 system prompt
-    system_prompt = (
-        f"你是一名名叫「{detail.name}」的 AI 研究员。\n"
-        f"职位：{detail.title}\n"
-        f"风格：{detail.style}\n"
-        f"简介：{detail.description}\n\n"
-    )
-    if detail.prompt:
-        system_prompt += f"特殊指令：{detail.prompt}\n\n"
-    system_prompt += "请基于以上角色设定回答用户的问题。回复应专业、有条理。"
-
-    messages = [
-        Msg(role="system", content=system_prompt),
-        Msg(role="user", content=payload.question),
-    ]
-
-    llm = get_llm_client()
-    if not llm.is_configured:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="LLM 服务未配置")
-
-    async def _event_generator() -> AsyncIterator[str]:
-        """SSE 事件生成器"""
-        async for token in llm.chat_stream(messages):
-            yield f"data: {json.dumps({'token': token}, ensure_ascii=False)}\n\n"
-        yield "data: [DONE]\n\n"
-
-    return StreamingResponse(
-        _event_generator(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
 
 
 @router.post("/{researcher_id}/hire")

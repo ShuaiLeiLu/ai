@@ -120,9 +120,8 @@ class TradingAllData(SchemaModel):
     logs: list[TradeLogItem]
 
 
-class TradingStreamSnapshot(SchemaModel):
-    """交易实时快照（SSE 推送）。"""
-    generated_at: datetime
+class TradingPortfolioData(SchemaModel):
+    """模拟盘轻量组合数据 —— 工作台只需要账户和持仓。"""
     account: TradingAccount
     positions: list[PositionItem]
 

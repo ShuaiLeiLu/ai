@@ -21,7 +21,7 @@ async def app_lifespan(_: FastAPI):
 
     # 启动策略调度引擎（进程内，不依赖 Celery/Redis）
     from app.engine.scheduler import start_scheduler, stop_scheduler
-    start_scheduler(container.database)
+    start_scheduler(container.database, container.redis)
 
     yield
 

@@ -28,7 +28,6 @@ import remarkGfm from 'remark-gfm';
 
 import {
   useTradingAll,
-  useTradingRealtimeStream,
   useTradingStatsWhenEnabled,
 } from '@/features/trading/hooks';
 import { routes } from '@/lib/constants/routes';
@@ -662,7 +661,6 @@ export function TradingDetailClient({ researcherId }: { researcherId: string }) 
   const [sideTab, setSideTab] = useState<'current' | 'history'>('current'); // 侧边栏 tab
   const [activeSymbol, setActiveSymbol] = useState<string | null>(null); // 选中的持仓
 
-  const realtime = useTradingRealtimeStream(researcherId);
   const allQuery = useTradingAll(researcherId);
   const statsQuery = useTradingStatsWhenEnabled(researcherId, mainTab === 'history');
 
@@ -691,26 +689,7 @@ export function TradingDetailClient({ researcherId }: { researcherId: string }) 
             <LeftOutlined className="text-xs" />
             <span>模拟交易详情</span>
           </Link>
-          <div className="flex items-center gap-2">
-            <span className={`inline-block h-2.5 w-2.5 rounded-full ${
-              realtime.status === 'live'
-                ? 'bg-emerald-500'
-                : realtime.status === 'connecting'
-                  ? 'bg-amber-400'
-                  : realtime.status === 'error'
-                    ? 'bg-rose-500'
-                    : 'bg-slate-300'
-            }`} />
-            <span className="text-xs text-slate-400">
-              {realtime.status === 'live'
-                ? '实时推送中'
-                : realtime.status === 'connecting'
-                  ? '正在连接实时行情'
-                  : realtime.status === 'error'
-                    ? '实时流重连中'
-                    : '实时流未开启'}
-            </span>
-          </div>
+          <span className="text-xs text-slate-400">实时连接已关闭</span>
         </div>
       </div>
 
