@@ -11,7 +11,9 @@ FROM node:20-bookworm-slim AS builder
 
 WORKDIR /app
 
-ENV NODE_ENV=production
+ENV NODE_ENV=production \
+    NEXT_PUBLIC_API_BASE_URL=/api/v1 \
+    NEXT_PUBLIC_SSE_BASE_URL=/api/v1
 
 COPY --from=deps /app/node_modules /app/node_modules
 COPY web /app
