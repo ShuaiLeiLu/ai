@@ -27,7 +27,10 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
 import {
-  useTradingAll,
+  useTradingAccountWhenEnabled,
+  useTradingLogsWhenEnabled,
+  useTradingPositionsWhenEnabled,
+  useTradingRecordsWhenEnabled,
   useTradingStatsWhenEnabled,
 } from '@/features/trading/hooks';
 import { routes } from '@/lib/constants/routes';
@@ -661,14 +664,19 @@ export function TradingDetailClient({ researcherId }: { researcherId: string }) 
   const [sideTab, setSideTab] = useState<'current' | 'history'>('current'); // 侧边栏 tab
   const [activeSymbol, setActiveSymbol] = useState<string | null>(null); // 选中的持仓
 
-  const allQuery = useTradingAll(researcherId);
+  const accountQuery = useTradingAccountWhenEnabled(researcherId);
+  const positionsQuery = useTradingPositionsWhenEnabled(researcherId);
+  const recordsEnabled = mainTab === 'history' || sideTab === 'history';
+  const logsEnabled = mainTab === 'log';
+  const recordsQuery = useTradingRecordsWhenEnabled(researcherId, recordsEnabled);
+  const logsQuery = useTradingLogsWhenEnabled(researcherId, logsEnabled);
   const statsQuery = useTradingStatsWhenEnabled(researcherId, mainTab === 'history');
 
-  const loading = allQuery.isLoading;
-  const acct = allQuery.data?.account;
-  const positions = allQuery.data?.positions ?? [];
-  const records = allQuery.data?.records ?? [];
-  const logs = allQuery.data?.logs ?? [];
+  const loading = accountQuery.isLoading || positionsQuery.isLoading || (logsEnabled && logsQuery.isLoading);
+  const acct = accountQuery.data;
+  const positions = positionsQuery.data ?? [];
+  const records = recordsQuery.data ?? [];
+  const logs = logsQuery.data ?? [];
   const stats = statsQuery.data ?? null;
 
   /** 初始资金（以后端返回为准，缺失时兜底 100 万） */

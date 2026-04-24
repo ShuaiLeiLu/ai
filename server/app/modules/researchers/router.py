@@ -130,26 +130,7 @@ async def workbench_hot_documents(
     if not session:
         return ApiResponse(data=ListResponse(items=[], total=0))
 
-    from sqlalchemy import select as sa_select
-    from app.models.document import Document as DocModel
-    from app.repositories.researcher_repo import ResearcherRepository
-
-    stmt = sa_select(DocModel).order_by(DocModel.view_count.desc()).limit(6)
-    doc_result = await session.execute(stmt)
-    docs = doc_result.scalars().all()
-    r_repo = ResearcherRepository(session)
-    items = []
-    for d in docs:
-        r = await r_repo.get_by_id(d.researcher_id)
-        items.append(WorkbenchHotDocument(
-            id=d.id,
-            title=d.title,
-            summary=d.summary,
-            researcher_name=r.name if r else "未知",
-            create_time=d.created_at,
-            view_count=d.view_count,
-            comment_count=d.comment_count,
-        ))
+    items = await service.async_list_workbench_hot_documents(session)
     return ApiResponse(data=ListResponse(items=items, total=len(items)))
 
 

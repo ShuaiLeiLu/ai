@@ -8,14 +8,12 @@
  *    - 选中时 → 研究员详情（Header + 最新制品横向卡片 + 模拟账户持仓表）
  *
  * 数据流：
- *  - useHiredResearchers()  已雇佣研究员列表
- *  - useHotDocuments()      热门研究文档
- *  - usePublicRank()        公开排行榜
+ *  - useWorkbenchOverview() 首屏聚合数据：已雇佣研究员、热门文档、公开排行榜
  *  - useTradingPortfolio()  模拟账户轻量快照
  */
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import {
@@ -42,7 +40,7 @@ import {
   SettingOutlined,
 } from '@ant-design/icons';
 
-import { useHiredResearchers, useHotDocuments, usePublicRank } from '@/features/researcher-workbench/hooks';
+import { useWorkbenchOverview } from '@/features/researcher-workbench/hooks';
 import { useTradingPortfolio } from '@/features/trading/hooks';
 import { routes } from '@/lib/constants/routes';
 import { useUserSessionStore } from '@/stores/user-session.store';
@@ -318,10 +316,17 @@ function RankRow({ item, sortBy }: { item: PublicRankItem; sortBy: RankSortBy })
 }
 
 /** 模拟交易排名区 */
-function RankingSection() {
-  const [sortBy, setSortBy] = useState<RankSortBy>('today');
-  const rankQuery = usePublicRank(sortBy, true);
-  const rankings = rankQuery.data ?? [];
+function RankingSection({
+  rankings,
+  loading,
+  sortBy,
+  onSortChange,
+}: {
+  rankings: PublicRankItem[];
+  loading: boolean;
+  sortBy: RankSortBy;
+  onSortChange: (value: RankSortBy) => void;
+}) {
   const leftCol = rankings.filter((_, i) => i % 2 === 0);
   const rightCol = rankings.filter((_, i) => i % 2 === 1);
 
@@ -340,14 +345,14 @@ function RankingSection() {
               { label: '今日排名', value: 'today' },
               { label: '本月排名', value: 'month' },
             ]}
-            onChange={(v) => setSortBy(v as RankSortBy)}
+            onChange={(v) => onSortChange(v as RankSortBy)}
           />
           <Link href="#" className="text-xs text-brand-500 hover:text-brand-600 flex items-center gap-0.5 ml-2">
             全部排名 <RightOutlined style={{ fontSize: 10 }} />
           </Link>
         </div>
       </div>
-      {rankQuery.isLoading ? (
+      {loading ? (
         <Skeleton active paragraph={{ rows: 5 }} />
       ) : rankings.length === 0 ? (
         <Empty description="暂无排名数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />
@@ -715,20 +720,19 @@ function ResearcherDetailView({
 
 export default function AIResearcherWorkstationPage() {
   const [activeId, setActiveId] = useState<string | null>(null); // 选中的研究员 ID
+  const [sortBy, setSortBy] = useState<RankSortBy>('today');
   const hydrated = useUserSessionStore((s) => s.hydrated);
   const accessToken = useUserSessionStore((s) => s.accessToken);
   const workbenchEnabled = hydrated && Boolean(accessToken);
-  const hiredQuery = useHiredResearchers(workbenchEnabled);
-  const docsQuery = useHotDocuments(workbenchEnabled);
-
-  /** 首次加载时自动选中第一个研究员（对标截图默认选中） */
-  useEffect(() => {
-    if (!activeId && hiredQuery.data && hiredQuery.data.length > 0) {
-      setActiveId(hiredQuery.data[0].researcher_id);
-    }
-  }, [hiredQuery.data, activeId]);
-
-  const activeResearcher = (hiredQuery.data ?? []).find((r) => r.researcher_id === activeId) ?? null;
+  const overviewQuery = useWorkbenchOverview(sortBy, workbenchEnabled);
+  const hiredResearchers = overviewQuery.data?.hired ?? [];
+  const hotDocuments = overviewQuery.data?.hot_documents ?? [];
+  const publicRankings = overviewQuery.data?.rankings ?? [];
+  const activeResearcher = hiredResearchers.find((r) => r.researcher_id === activeId) ?? null;
+  const activeDocuments = activeResearcher
+    ? hotDocuments.filter((doc) => doc.researcher_name === activeResearcher.name)
+    : hotDocuments;
+  const selectedDocuments = activeDocuments.length > 0 ? activeDocuments : hotDocuments;
 
   return (
     <div className="flex flex-col md:flex-row gap-4" style={{ minHeight: 'calc(100vh - 56px - 40px)' }}>
@@ -738,7 +742,17 @@ export default function AIResearcherWorkstationPage() {
         <div className="md:hidden p-3 space-y-2">
           <div className="text-sm font-bold text-slate-800 mb-1">AI研究员</div>
           <div className="flex gap-2 overflow-x-auto pb-1">
-            {(hiredQuery.data ?? []).map((r) => {
+            <button
+              type="button"
+              onClick={() => setActiveId(null)}
+              className={`flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors ${
+                activeId === null ? 'bg-amber-50 text-amber-700 font-semibold' : 'bg-slate-50'
+              }`}
+            >
+              <AppstoreOutlined />
+              <span className="whitespace-nowrap">总览</span>
+            </button>
+            {hiredResearchers.map((r) => {
               const active = r.researcher_id === activeId;
               return (
                 <button
@@ -761,8 +775,8 @@ export default function AIResearcherWorkstationPage() {
         {/* 桌面端竖排面板 */}
         <div className="hidden md:flex md:flex-col md:h-full">
           <SidePanel
-            researchers={hiredQuery.data ?? []}
-            loading={hiredQuery.isLoading}
+            researchers={hiredResearchers}
+            loading={overviewQuery.isLoading}
             activeId={activeId}
             onSelect={setActiveId}
           />
@@ -774,8 +788,8 @@ export default function AIResearcherWorkstationPage() {
         {activeResearcher ? (
           <ResearcherDetailView
             researcher={activeResearcher}
-            documents={docsQuery.data ?? []}
-            docsLoading={docsQuery.isLoading}
+            documents={selectedDocuments}
+            docsLoading={overviewQuery.isLoading}
           />
         ) : (
           <>
@@ -785,8 +799,13 @@ export default function AIResearcherWorkstationPage() {
                 辅助您投研决策的垂直领域专家，管理已雇佣的AI研究员
               </Typography.Text>
             </div>
-            <HotDocumentsSection documents={docsQuery.data ?? []} loading={docsQuery.isLoading} />
-            <RankingSection />
+            <HotDocumentsSection documents={hotDocuments} loading={overviewQuery.isLoading} />
+            <RankingSection
+              rankings={publicRankings}
+              loading={overviewQuery.isLoading}
+              sortBy={sortBy}
+              onSortChange={setSortBy}
+            />
           </>
         )}
       </div>

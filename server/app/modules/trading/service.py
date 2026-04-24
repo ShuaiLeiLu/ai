@@ -484,16 +484,13 @@ class TradingService:
     async def async_get_account(
         self, session: AsyncSession, user_id: str, researcher_id: str
     ) -> TradingAccount:
-        """从数据库查询模拟账户。"""
+        """从数据库查询模拟账户快照。"""
         cache_key = f"account:{user_id}:{researcher_id}"
         cached = self._cache_get(cache_key)
         if isinstance(cached, TradingAccount):
             return cached
 
         acc = await self._resolve_account_model(session, user_id, researcher_id)
-
-        await self._refresh_account_snapshot(session, acc, cache_only=True)
-        await session.flush()
 
         data = TradingAccount(
             account_id=acc.id,
@@ -512,33 +509,38 @@ class TradingService:
         account_id: str,
         *,
         cache_only: bool = True,
+        include_sellable_quantity: bool = False,
     ) -> list[PositionItem]:
-        """从数据库查询持仓，并尽量用实时行情更新 current_price / pnl。
+        """从数据库查询持仓快照。
 
-        默认走缓存快路径，避免普通 REST 接口被实时行情外部请求拖慢。
+        详情页和工作台只需要展示持仓盈亏，不需要每次都查当天买入数量。
+        `include_sellable_quantity=True` 仅留给确实要展示 T+1 可卖数量的场景。
         """
         if cache_only:
-            cache_key = f"positions:{account_id}"
+            cache_key = f"positions:{account_id}:{int(include_sellable_quantity)}"
             cached = self._cache_get(cache_key)
             if isinstance(cached, list):
                 return cached
 
         repo = PositionRepository(session)
         positions = await repo.list_by_account(account_id)
-        today_buy_quantities = await self._load_today_buy_quantities(session, account_id)
-        quote_map = await self._load_realtime_quotes(
-            [position.symbol for position in positions],
-            cache_only=cache_only,
+        today_buy_quantities = (
+            await self._load_today_buy_quantities(session, account_id)
+            if include_sellable_quantity
+            else {}
         )
-        self._apply_quotes_to_positions(positions, quote_map)
         items = [
             PositionItem(
                 symbol=position.symbol,
                 name=position.name,
                 quantity=position.quantity,
-                sellable_quantity=compute_sellable_quantity(
-                    int(position.quantity),
-                    today_buy_quantities.get(position.symbol, 0),
+                sellable_quantity=(
+                    compute_sellable_quantity(
+                        int(position.quantity),
+                        today_buy_quantities.get(position.symbol, 0),
+                    )
+                    if include_sellable_quantity
+                    else None
                 ),
                 cost_price=float(position.cost_price),
                 current_price=float(position.current_price),
@@ -548,7 +550,11 @@ class TradingService:
         ]
         sorted_items = self._sort_positions(items)
         if cache_only:
-            self._cache_set(f"positions:{account_id}", sorted_items, POSITIONS_CACHE_TTL_SECONDS)
+            self._cache_set(
+                f"positions:{account_id}:{int(include_sellable_quantity)}",
+                sorted_items,
+                POSITIONS_CACHE_TTL_SECONDS,
+            )
         return sorted_items
 
     async def _load_replay(
@@ -603,11 +609,29 @@ class TradingService:
                     log_type=log.log_type,
                     trade_records=related_records,
                     title=log.title or "",
-                    content=log.content or "",
+                    content=self._normalize_analysis_content(log.log_type, log.content or ""),
                     created_at=log.created_at,
                 )
             )
         return items
+
+    @staticmethod
+    def _normalize_analysis_content(log_type: str, content: str) -> str:
+        """把旧交易分析日志补成统一的 AI 复盘阅读结构。"""
+        text = content.strip()
+        if log_type != "analysis" or not text:
+            return content
+        required_sections = ("交易复盘", "执行反思", "次日展望")
+        if all(section in text for section in required_sections):
+            return text
+        return (
+            "## 交易复盘\n"
+            f"{text}\n\n"
+            "## 执行反思\n"
+            "本次操作已按既定策略规则完成。后续需要重点复核成交价格、仓位暴露与调仓节奏，避免因单一信号导致组合过度集中。\n\n"
+            "## 次日展望\n"
+            "下一交易日优先观察持仓标的开盘强弱、板块延续性和风险事件变化。若价格偏离策略预期，应按模拟盘规则继续执行止盈止损与轮动纪律。"
+        )
 
     async def async_get_all(
         self,
@@ -623,62 +647,19 @@ class TradingService:
         acc = await self._resolve_account_model(session, user_id, researcher_id)
         account_id = acc.id
 
-        # 1. 持仓列表 + Redis 行情缓存；页面请求不再同步访问外部行情源。
-        repo = PositionRepository(session)
-        positions = await repo.list_by_account(account_id)
-        today_buy_quantities = await self._load_today_buy_quantities(session, account_id)
-        quote_map = await self._load_realtime_quotes(
-            [p.symbol for p in positions], cache_only=True,
-        )
-        _, floating_daily_pnl = self._apply_quotes_to_positions(positions, quote_map)
-
-        position_items = self._sort_positions([
-            PositionItem(
-                symbol=p.symbol, name=p.name, quantity=p.quantity,
-                sellable_quantity=compute_sellable_quantity(
-                    int(p.quantity),
-                    today_buy_quantities.get(p.symbol, 0),
-                ),
-                cost_price=float(p.cost_price),
-                current_price=float(p.current_price),
-                pnl=float(p.pnl),
-            )
-            for p in positions
-        ])
+        # 1. 持仓与账户总览直接读取已落库快照。
+        position_items = await self.async_list_positions(session, account_id, cache_only=True)
 
         # 2. 加载 & 回放成交记录（只做一次）
         replay_data = await self._load_replay(session, account_id)
-        raw_records, replay = replay_data
-
-        # 3. 计算 daily_pnl（复用已有 replay，不再独立查+回放）
-        today = datetime.now().date()
-        realized_daily_pnl = 0.0
-        has_sells_today = any(
-            r.side == "sell" and r.created_at.date() == today for r in raw_records
-        )
-        if has_sells_today:
-            for record in replay.record_map.values():
-                if record.created_at.date() != today:
-                    continue
-                if record.side == "buy":
-                    realized_daily_pnl -= record.commission
-                elif record.realized_pnl is not None:
-                    realized_daily_pnl += record.realized_pnl
-        else:
-            today_buys = [r for r in raw_records if r.created_at.date() == today]
-            realized_daily_pnl = -sum(float(r.commission or 0.0) for r in today_buys)
-
-        holding_value = sum(float(p.current_price) * p.quantity for p in positions)
-        total_asset = round(float(acc.available_cash) + holding_value, 2)
-        daily_pnl = round(realized_daily_pnl + floating_daily_pnl, 2)
 
         account_data = TradingAccount(
             account_id=acc.id,
             initial_capital=self._infer_initial_capital(acc),
-            total_asset=total_asset,
+            total_asset=float(acc.total_asset),
             available_cash=float(acc.available_cash),
-            holding_value=round(holding_value, 2),
-            daily_pnl=daily_pnl,
+            holding_value=float(acc.holding_value),
+            daily_pnl=float(acc.daily_pnl),
         )
 
         # 4. 成交记录（复用 replay）
@@ -708,62 +689,14 @@ class TradingService:
         acc = await self._resolve_account_model(session, user_id, researcher_id)
         account_id = acc.id
 
-        repo = PositionRepository(session)
-        positions = await repo.list_by_account(account_id)
-        today_buy_quantities = await self._load_today_buy_quantities(session, account_id)
-        quote_map = await self._load_realtime_quotes(
-            [position.symbol for position in positions],
-            cache_only=True,
-        )
-        _, floating_daily_pnl = self._apply_quotes_to_positions(positions, quote_map)
-
-        position_items = self._sort_positions([
-            PositionItem(
-                symbol=position.symbol,
-                name=position.name,
-                quantity=position.quantity,
-                sellable_quantity=compute_sellable_quantity(
-                    int(position.quantity),
-                    today_buy_quantities.get(position.symbol, 0),
-                ),
-                cost_price=float(position.cost_price),
-                current_price=float(position.current_price),
-                pnl=float(position.pnl),
-            )
-            for position in positions
-        ])
-
-        today = datetime.now().date()
-        start_at = datetime.combine(today, datetime.min.time())
-        end_at = start_at + timedelta(days=1)
-        today_records = await self._load_account_records_in_range(
-            session,
-            account_id,
-            start_at=start_at,
-            end_at=end_at,
-        )
-        if any(record.side == "sell" for record in today_records):
-            _, replay = await self._load_replay(session, account_id)
-            realized_daily_pnl = sum(
-                (
-                    -record.commission
-                    if record.side == "buy"
-                    else float(record.realized_pnl or 0.0)
-                )
-                for record in replay.record_map.values()
-                if record.created_at.date() == today
-            )
-        else:
-            realized_daily_pnl = -sum(float(record.commission or 0.0) for record in today_records)
-
-        holding_value = sum(float(position.current_price) * position.quantity for position in positions)
+        position_items = await self.async_list_positions(session, account_id, cache_only=True)
         account_data = TradingAccount(
             account_id=acc.id,
             initial_capital=self._infer_initial_capital(acc),
-            total_asset=round(float(acc.available_cash) + holding_value, 2),
+            total_asset=float(acc.total_asset),
             available_cash=float(acc.available_cash),
-            holding_value=round(holding_value, 2),
-            daily_pnl=round(realized_daily_pnl + floating_daily_pnl, 2),
+            holding_value=float(acc.holding_value),
+            daily_pnl=float(acc.daily_pnl),
         )
         return TradingPortfolioData(account=account_data, positions=position_items)
 
@@ -781,9 +714,6 @@ class TradingService:
         account = acct_result.scalar_one_or_none()
         initial_capital = initial_capital or self._infer_initial_capital(account)
         total_asset = float(account.total_asset) if account else initial_capital
-        if account:
-            await self._refresh_account_snapshot(session, account, cache_only=True)
-            total_asset = float(account.total_asset)
 
         records, replay = await self._load_replay(session, account_id)
         if not records:

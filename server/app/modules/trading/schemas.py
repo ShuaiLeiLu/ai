@@ -64,7 +64,7 @@ class TradeLogItem(SchemaModel):
     """交易日志条目"""
     log_id: str
     log_type: str              # trade / analysis
-    trade_records: list[TradeRecord] = []  # log_type=trade 时关联的成交记录
+    trade_records: list[TradeRecord] = Field(default_factory=list)  # log_type=trade 时关联的成交记录
     title: str = ""
     content: str = ""          # Markdown 富文本
     created_at: datetime

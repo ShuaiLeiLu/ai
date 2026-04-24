@@ -1,12 +1,14 @@
 """研究员领域服务。"""
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime
 from uuid import uuid4
 
 from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Load, load_only, noload
 
 from app.integrations.llm.client import LLMMessage, get_llm_client
 from app.models.researcher import Researcher as ResearcherModel
@@ -30,6 +32,10 @@ from app.modules.researchers.schemas import (
     WorkbenchQuickAction,
     WorkbenchRankSortBy,
 )
+
+
+WORKBENCH_OVERVIEW_CACHE_TTL_SECONDS = 30
+_workbench_overview_cache: dict[str, tuple[float, WorkbenchOverview]] = {}
 
 
 class ResearcherService:
@@ -333,30 +339,53 @@ class ResearcherService:
     async def async_list_workbench_hired(
         self, session: AsyncSession, user_id: str
     ) -> list[WorkbenchHiredResearcher]:
-        researcher_repo = ResearcherRepository(session)
-
-        system_stmt = select(ResearcherModel).where(ResearcherModel.is_system.is_(True))
-        system_result = await session.execute(system_stmt)
-        system_researchers = system_result.scalars().all()
+        researcher_options = self._researcher_card_load_options()
+        hired_subquery = (
+            select(HireModel.researcher_id)
+            .where(
+                HireModel.user_id == user_id,
+                HireModel.status == "hired",
+            )
+        )
+        stmt = (
+            select(ResearcherModel)
+            .where(
+                (ResearcherModel.is_system.is_(True))
+                | (ResearcherModel.id.in_(hired_subquery))
+            )
+            .order_by(ResearcherModel.is_system.desc(), ResearcherModel.name.asc())
+            .options(*researcher_options)
+        )
+        query_result = await session.execute(stmt)
 
         seen_ids: set[str] = set()
         result: list[WorkbenchHiredResearcher] = []
-        for researcher in system_researchers:
-            seen_ids.add(researcher.id)
-            result.append(self._researcher_to_hired_card(researcher))
-
-        hire_repo = ResearcherHireRepository(session)
-        hires = await hire_repo.list_hired_by_user(user_id)
-        for hire in hires:
-            if hire.researcher_id in seen_ids:
-                continue
-            researcher = await researcher_repo.get_by_id(hire.researcher_id)
-            if not researcher:
+        for researcher in query_result.scalars().all():
+            if researcher.id in seen_ids:
                 continue
             seen_ids.add(researcher.id)
             result.append(self._researcher_to_hired_card(researcher))
 
         return result
+
+    @staticmethod
+    def _researcher_card_load_options() -> tuple[Load, ...]:
+        """工作台卡片只需要轻字段，避免自动 selectin 关系拖慢首屏。"""
+        return (
+            load_only(
+                ResearcherModel.id,
+                ResearcherModel.avatar_url,
+                ResearcherModel.name,
+                ResearcherModel.description,
+                ResearcherModel.status,
+                ResearcherModel.tags,
+                ResearcherModel.today_pnl,
+                ResearcherModel.win_rate_30d,
+                ResearcherModel.level,
+            ),
+            noload(ResearcherModel.hires),
+            noload(ResearcherModel.documents),
+        )
 
     @staticmethod
     def _researcher_to_hired_card(researcher: ResearcherModel) -> WorkbenchHiredResearcher:
@@ -384,6 +413,14 @@ class ResearcherService:
             .where(ResearcherModel.visibility == "public")
             .order_by(order_col)
             .limit(limit)
+            .options(
+                Load(ResearcherModel).load_only(
+                    ResearcherModel.id,
+                    ResearcherModel.name,
+                ),
+                Load(ResearcherModel).noload(ResearcherModel.hires),
+                Load(ResearcherModel).noload(ResearcherModel.documents),
+            )
         )
         result = await session.execute(stmt)
 
@@ -403,6 +440,59 @@ class ResearcherService:
                 )
             )
         return rankings
+
+    async def async_list_workbench_hot_documents(
+        self, session: AsyncSession, *, limit: int = 6
+    ) -> list[WorkbenchHotDocument]:
+        """工作台热门文档。
+
+        这个方法同时服务独立接口和 overview 聚合接口，避免两个路径各自实现一份查询逻辑。
+        """
+        from app.models.document import Document as DocModel
+
+        stmt = (
+            select(DocModel)
+            .order_by(DocModel.view_count.desc())
+            .limit(limit)
+            .options(
+                load_only(
+                    DocModel.id,
+                    DocModel.researcher_id,
+                    DocModel.title,
+                    DocModel.summary,
+                    DocModel.view_count,
+                    DocModel.comment_count,
+                    DocModel.created_at,
+                ),
+                noload(DocModel.researcher),
+            )
+        )
+        document_result = await session.execute(stmt)
+        documents = list(document_result.scalars().all())
+        researcher_ids = sorted({document.researcher_id for document in documents})
+        researcher_names: dict[str, str] = {}
+        if researcher_ids:
+            researcher_stmt = (
+                select(ResearcherModel.id, ResearcherModel.name)
+                .where(ResearcherModel.id.in_(researcher_ids))
+            )
+            researcher_result = await session.execute(researcher_stmt)
+            researcher_names = {row.id: row.name for row in researcher_result.all()}
+
+        hot_documents: list[WorkbenchHotDocument] = []
+        for document in documents:
+            hot_documents.append(
+                WorkbenchHotDocument(
+                    id=document.id,
+                    title=document.title,
+                    summary=document.summary,
+                    researcher_name=researcher_names.get(document.researcher_id, "未知"),
+                    create_time=document.created_at,
+                    view_count=document.view_count,
+                    comment_count=document.comment_count,
+                )
+            )
+        return hot_documents
 
     async def async_test_chat(
         self, session: AsyncSession, researcher_id: str, question: str
@@ -441,29 +531,18 @@ class ResearcherService:
     async def async_get_workbench_overview(
         self, session: AsyncSession, user_id: str, *, sort_by: WorkbenchRankSortBy = "today"
     ) -> WorkbenchOverview:
-        from app.models.document import Document as DocModel
+        cache_key = f"{user_id}:{sort_by}"
+        cached = _workbench_overview_cache.get(cache_key)
+        now = time.monotonic()
+        if cached and cached[0] > now:
+            return cached[1]
 
         partial_failures: list[str] = []
         hired = await self.async_list_workbench_hired(session, user_id)
 
         hot_documents: list[WorkbenchHotDocument] = []
         try:
-            researcher_repo = ResearcherRepository(session)
-            stmt = select(DocModel).order_by(DocModel.view_count.desc()).limit(6)
-            document_result = await session.execute(stmt)
-            for document in document_result.scalars().all():
-                researcher = await researcher_repo.get_by_id(document.researcher_id)
-                hot_documents.append(
-                    WorkbenchHotDocument(
-                        id=document.id,
-                        title=document.title,
-                        summary=document.summary,
-                        researcher_name=researcher.name if researcher else "未知",
-                        create_time=document.created_at,
-                        view_count=document.view_count,
-                        comment_count=document.comment_count,
-                    )
-                )
+            hot_documents = await self.async_list_workbench_hot_documents(session)
         except Exception:
             partial_failures.append("hot_documents")
 
@@ -473,7 +552,7 @@ class ResearcherService:
         except Exception:
             partial_failures.append("rankings")
 
-        return WorkbenchOverview(
+        overview = WorkbenchOverview(
             hired=hired,
             hot_documents=hot_documents,
             rankings=rankings,
@@ -481,6 +560,11 @@ class ResearcherService:
             risk_disclaimer=self._workbench_risk_disclaimer,
             partial_failures=partial_failures,
         )
+        _workbench_overview_cache[cache_key] = (
+            time.monotonic() + WORKBENCH_OVERVIEW_CACHE_TTL_SECONDS,
+            overview,
+        )
+        return overview
 
     @staticmethod
     def _model_to_summary(researcher: ResearcherModel) -> ResearcherSummary:

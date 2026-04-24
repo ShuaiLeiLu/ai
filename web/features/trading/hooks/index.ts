@@ -100,12 +100,30 @@ export const useTradingRecords = (researcherId?: string) =>
     refetchOnWindowFocus: false,
   });
 
+export const useTradingRecordsWhenEnabled = (researcherId?: string, enabled: boolean = true) =>
+  useQuery({
+    queryKey: [featureKey, 'records', researcherId ?? 'default'],
+    queryFn: () => api.getTradingRecords(researcherId),
+    enabled: Boolean(researcherId) && enabled,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
+
 /** 查询交易日志（trade 表格 + analysis 富文本） */
 export const useTradingLogs = (researcherId?: string) =>
   useQuery({
     queryKey: [featureKey, 'logs', researcherId ?? 'default'],
     queryFn: () => api.getTradingLogs(researcherId),
     enabled: Boolean(researcherId),
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
+
+export const useTradingLogsWhenEnabled = (researcherId?: string, enabled: boolean = true) =>
+  useQuery({
+    queryKey: [featureKey, 'logs', researcherId ?? 'default'],
+    queryFn: () => api.getTradingLogs(researcherId),
+    enabled: Boolean(researcherId) && enabled,
     staleTime: 30_000,
     refetchOnWindowFocus: false,
   });

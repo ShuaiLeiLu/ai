@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 from sqlalchemy import select
+from sqlalchemy.orm import load_only, noload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.trading import Position, TradingAccount, TradeRecord
@@ -25,17 +26,49 @@ class TradingAccountRepository(BaseRepository[TradingAccount]):
         self, user_id: str, researcher_id: str
     ) -> TradingAccount | None:
         """按用户+研究员查找关联的模拟账户"""
-        stmt = select(TradingAccount).where(
-            TradingAccount.user_id == user_id,
-            TradingAccount.researcher_id == researcher_id,
+        stmt = (
+            select(TradingAccount)
+            .options(
+                load_only(
+                    TradingAccount.id,
+                    TradingAccount.user_id,
+                    TradingAccount.researcher_id,
+                    TradingAccount.total_asset,
+                    TradingAccount.available_cash,
+                    TradingAccount.holding_value,
+                    TradingAccount.daily_pnl,
+                ),
+                noload(TradingAccount.positions),
+                noload(TradingAccount.trades),
+            )
+            .where(
+                TradingAccount.user_id == user_id,
+                TradingAccount.researcher_id == researcher_id,
+            )
         )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
     async def get_by_researcher(self, researcher_id: str) -> TradingAccount | None:
         """按研究员ID查找模拟账户（系统研究员共享账户兜底）"""
-        stmt = select(TradingAccount).where(
-            TradingAccount.researcher_id == researcher_id,
+        stmt = (
+            select(TradingAccount)
+            .options(
+                load_only(
+                    TradingAccount.id,
+                    TradingAccount.user_id,
+                    TradingAccount.researcher_id,
+                    TradingAccount.total_asset,
+                    TradingAccount.available_cash,
+                    TradingAccount.holding_value,
+                    TradingAccount.daily_pnl,
+                ),
+                noload(TradingAccount.positions),
+                noload(TradingAccount.trades),
+            )
+            .where(
+                TradingAccount.researcher_id == researcher_id,
+            )
         )
         result = await self.session.execute(stmt)
         return result.scalars().first()
