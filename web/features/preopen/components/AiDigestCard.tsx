@@ -1,17 +1,17 @@
 /**
- * 盘前热门解读（AI）—— 基于涨停池数据生成的 AI 摘要
+ * 盘前热门解读（AI）—— 用户点击后生成 AI 摘要
  *
  * 布局：标题 + 情绪标签 + 要点列表 + 生成时间
  * 数据流：useAiDigestQuery → 后端 /preopen/ai-digest
  */
 'use client';
 
-import { Tag, Typography } from 'antd';
+import { Alert, Button, Skeleton, Tag, Typography } from 'antd';
 import { BulbOutlined } from '@ant-design/icons';
+import { useState } from 'react';
 
 import { PageCard } from '@/components/ui/page-card';
 import { useAiDigestQuery } from '@/features/preopen/hooks';
-import { StateWrapper } from '@/features/preopen/components/shared/StateWrapper';
 
 const { Text } = Typography;
 
@@ -23,44 +23,66 @@ const sentimentMeta: Record<string, { color: string; label: string }> = {
 };
 
 export function AiDigestCard() {
-  const { data, isLoading, error } = useAiDigestQuery();
+  const [requested, setRequested] = useState(false);
+  const { data, isLoading, isFetching, error, refetch } = useAiDigestQuery(requested);
   const meta = sentimentMeta[data?.sentiment ?? 'neutral'];
+  const loading = isLoading || isFetching;
+
+  const handleRequestDigest = () => {
+    if (requested) {
+      void refetch();
+      return;
+    }
+    setRequested(true);
+  };
 
   return (
-    <StateWrapper data={data} isLoading={isLoading} error={error} title="盘前热门解读">
-      <PageCard
-        title={
-          <span className="flex items-center gap-1.5">
-            <BulbOutlined className="text-amber-500" />
-            盘前热门解读
-          </span>
-        }
-      >
-        {data && (
-          <div className="space-y-3">
-            {/* 情绪标签 + 标题 */}
-            <div className="flex items-start gap-2">
-              <Tag color={meta.color} className="shrink-0">{meta.label}</Tag>
-              <Text strong className="text-sm leading-5">{data.headline}</Text>
-            </div>
+    <PageCard
+      title={
+        <span className="flex items-center gap-1.5">
+          <BulbOutlined className="text-amber-500" />
+          盘前热门解读
+        </span>
+      }
+      extra={
+        <Button size="small" type={data ? 'default' : 'primary'} loading={loading} onClick={handleRequestDigest}>
+          {data ? '重新生成' : 'AI 解读'}
+        </Button>
+      }
+    >
+      {!requested && !data && (
+        <div className="py-6 text-center text-sm text-slate-400">
+          点击后生成盘前 AI 解读
+        </div>
+      )}
 
-            {/* 要点列表 */}
-            <ul className="list-none space-y-1.5 pl-0">
-              {data.key_points.map((pt, i) => (
-                <li key={i} className="flex items-start gap-1.5 text-[13px] leading-5 text-slate-600">
-                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-400" />
-                  {pt}
-                </li>
-              ))}
-            </ul>
+      {loading && <Skeleton active paragraph={{ rows: 4 }} />}
 
-            {/* 生成时间 */}
-            <div className="text-[11px] text-slate-400">
-              生成时间：{new Date(data.generated_at).toLocaleString('zh-CN')}
-            </div>
+      {error && !loading && (
+        <Alert message="AI 解读生成失败" description={error.message} type="error" showIcon />
+      )}
+
+      {data && !loading && (
+        <div className="space-y-3">
+          <div className="flex items-start gap-2">
+            <Tag color={meta.color} className="shrink-0">{meta.label}</Tag>
+            <Text strong className="text-sm leading-5">{data.headline}</Text>
           </div>
-        )}
-      </PageCard>
-    </StateWrapper>
+
+          <ul className="list-none space-y-1.5 pl-0">
+            {data.key_points.map((pt, i) => (
+              <li key={i} className="flex items-start gap-1.5 text-[13px] leading-5 text-slate-600">
+                <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-400" />
+                {pt}
+              </li>
+            ))}
+          </ul>
+
+          <div className="text-[11px] text-slate-400">
+            生成时间：{new Date(data.generated_at).toLocaleString('zh-CN')}
+          </div>
+        </div>
+      )}
+    </PageCard>
   );
 }

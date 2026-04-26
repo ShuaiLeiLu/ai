@@ -131,16 +131,3 @@ class StockRankItem(SchemaModel):
     turnover_ratio: float      # 换手率
     industry: str              # 所属行业
     reason: str                # 入选理由（如"连板"、"60日新高"等）
-
-
-class PreopenAllData(SchemaModel):
-    """盘前速览聚合数据 —— 一次请求返回全部。"""
-    hot_news: list[HotNewsItem]
-    ai_digest: AiDigest
-    market_indicators: list[MarketIndicator]
-    anomalies: AnomalyOverview
-    trends: TrendOverview
-    limit_up_ladder: list[LimitUpLadderItem]
-    industry_boards: list[IndustryBoardItem]
-    stock_rank_up: list[StockRankItem]
-    stock_rank_down: list[StockRankItem]
