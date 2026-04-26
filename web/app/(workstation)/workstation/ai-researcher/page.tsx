@@ -31,12 +31,9 @@ import {
   ClockCircleOutlined,
   EyeOutlined,
   FileTextOutlined,
-  FormOutlined,
   MessageOutlined,
   PlusOutlined,
   RightOutlined,
-  RocketOutlined,
-  SendOutlined,
   SettingOutlined,
 } from '@ant-design/icons';
 
@@ -145,22 +142,22 @@ function SidePanel({
   return (
     <div className="flex h-full flex-col">
       {/* 页面标题 */}
-      <div className="px-4 pt-5 pb-2">
+      <div className="px-3.5 pb-3 pt-4">
         <div className="text-base font-bold text-slate-800">AI研究员</div>
-        <div className="mt-0.5 text-xs text-slate-400 leading-relaxed">
+        <div className="mt-1 text-xs leading-relaxed text-slate-400">
           辅助您投研决策的垂直领域专家
         </div>
       </div>
 
       {/* 总览入口 */}
-      <div className="px-3 mb-1">
+      <div className="mb-1 px-2.5">
         <button
           type="button"
           onClick={() => onSelect(null)}
-          className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm transition-colors ${
+          className={`flex w-full items-center gap-2.5 rounded-md border px-3 py-2.5 text-left text-sm transition-colors ${
             activeId === null
-              ? 'bg-amber-50 text-amber-700 font-medium'
-              : 'hover:bg-slate-50 text-slate-600'
+              ? 'border-amber-200 bg-amber-50 text-amber-700 font-medium'
+              : 'border-transparent text-slate-600 hover:bg-slate-50'
           }`}
         >
           <AppstoreOutlined className={activeId === null ? 'text-amber-500' : 'text-slate-400'} />
@@ -169,7 +166,7 @@ function SidePanel({
       </div>
 
       {/* 研究员列表 */}
-      <div className="flex-1 overflow-y-auto px-3">
+      <div className="flex-1 overflow-y-auto px-2.5">
         {loading && (
           <div className="space-y-3 p-2">
             {[1, 2, 3].map((i) => (
@@ -188,17 +185,17 @@ function SidePanel({
                 key={r.researcher_id}
                 type="button"
                 onClick={() => onSelect(r.researcher_id)}
-                className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 mb-0.5 text-left transition-colors ${
-                  active ? 'bg-brand-50 text-brand-600' : 'hover:bg-slate-50'
+                className={`mb-1 flex w-full items-center gap-2.5 rounded-md border px-3 py-2.5 text-left transition-colors ${
+                  active ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-transparent hover:bg-slate-50'
                 }`}
               >
                 {/* 彩色机器人头像 */}
-                <div className={`w-9 h-9 rounded-lg overflow-hidden shrink-0 ${getAvatarBg(r.name)}`}>
+                <div className={`h-8 w-8 shrink-0 overflow-hidden rounded-md ${getAvatarBg(r.name)}`}>
                   <Image
                     src={getAvatarSrc(r.name)}
                     alt={r.name}
-                    width={36}
-                    height={36}
+                    width={32}
+                    height={32}
                     className="w-full h-full object-cover"
                   />
                 </div>
@@ -211,7 +208,7 @@ function SidePanel({
       </div>
 
       {/* 底部链接 */}
-      <div className="border-t border-slate-100 px-4 py-3 space-y-2">
+      <div className="space-y-2 border-t border-slate-100 px-3.5 py-3">
         <Link
           href={routes.labTalentMarket}
           className="flex items-center gap-1 text-xs text-brand-500 hover:text-brand-600 transition-colors"
@@ -231,8 +228,100 @@ function SidePanel({
 
 // ──────────── 首页视图子组件 ────────────
 
-/** 24小时热门文档区 */
-type DocTab = 'hot' | 'latest' | 'mine';
+function ResearcherCardsSection({
+  researchers,
+  loading,
+  onSelect,
+}: {
+  researchers: HiredResearcher[];
+  loading: boolean;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <div className="rounded-lg border border-slate-100 bg-white p-4">
+      <div className="mb-4 flex items-center justify-between">
+        <div>
+          <Typography.Title level={5} className="!mb-1 !text-lg">研究员卡片</Typography.Title>
+          <div className="text-sm text-slate-400">快速进入研究员工作区，查看制品、模拟盘和任务状态</div>
+        </div>
+        <Link href={routes.labTalentMarket} className="flex items-center gap-1 text-sm text-amber-500 hover:text-amber-600">
+          扩充团队 <RightOutlined style={{ fontSize: 11 }} />
+        </Link>
+      </div>
+
+      {loading ? (
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="rounded-xl border border-slate-100 p-4">
+              <Skeleton avatar active paragraph={{ rows: 4 }} />
+            </div>
+          ))}
+        </div>
+      ) : researchers.length === 0 ? (
+        <div className="py-10">
+          <Empty description="暂无研究员" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+          {researchers.map((r) => (
+            <button
+              key={r.researcher_id}
+              type="button"
+              onClick={() => onSelect(r.researcher_id)}
+              className="group rounded-xl border border-slate-100 bg-gradient-to-br from-white to-slate-50 p-4 text-left transition-all hover:-translate-y-0.5 hover:border-amber-200 hover:shadow-md"
+            >
+              <div className="mb-4 flex items-start justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className={`h-12 w-12 overflow-hidden rounded-xl ${getAvatarBg(r.name)}`}>
+                    <Image src={getAvatarSrc(r.name)} alt={r.name} width={48} height={48} className="h-full w-full object-cover" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-base font-bold text-slate-800">{r.name}</span>
+                      <span className="rounded-full bg-amber-400 px-2 py-0.5 text-xs font-medium text-white">{r.level || 'LV.2'}</span>
+                    </div>
+                    <div className="mt-1 flex items-center gap-1.5 text-xs text-slate-400">
+                      <Badge status={r.status === 'active' ? 'processing' : 'default'} />
+                      <span>{r.status === 'active' ? '努力工作中' : '空闲'}</span>
+                    </div>
+                  </div>
+                </div>
+                <RightOutlined className="mt-2 text-xs text-slate-300 transition-colors group-hover:text-amber-500" />
+              </div>
+
+              <div className="line-clamp-2 min-h-10 text-sm leading-relaxed text-slate-500">
+                {r.summary || '专注小市值策略跟踪、交易复盘与次日计划。'}
+              </div>
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                {((r.tags ?? []).length > 0 ? r.tags : ['模拟盘', '策略跟踪']).slice(0, 3).map((tag) => (
+                  <span key={tag} className="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-slate-500 ring-1 ring-slate-100">
+                    {tag}
+                  </span>
+                ))}
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-3 border-t border-slate-100 pt-4">
+                <div>
+                  <div className="text-xs text-slate-400">今日盈亏</div>
+                  <div className={`mt-1 text-lg font-black ${yieldColor(r.today_yield)}`}>
+                    {r.today_yield > 0 ? '+' : ''}{formatMoney(r.today_yield)}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-slate-400">30日胜率</div>
+                  <div className="mt-1 text-lg font-black text-slate-800">
+                    {formatPct(r.win_rate_30d)}
+                  </div>
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function HotDocumentsSection({
   documents,
@@ -241,51 +330,54 @@ function HotDocumentsSection({
   documents: HotDocument[];
   loading: boolean;
 }) {
-  const [docTab, setDocTab] = useState<DocTab>('hot');
-
   return (
-    <div className="rounded-lg bg-white p-4 sm:p-5">
+    <div className="rounded-lg border border-slate-100 bg-white p-4">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <Typography.Title level={5} className="!mb-0">24小时内热门文档</Typography.Title>
-        <Link href={routes.documents} className="text-xs text-brand-500 hover:text-brand-600 flex items-center gap-0.5">
-          查看更多 <RightOutlined style={{ fontSize: 10 }} />
+        <Typography.Title level={5} className="!mb-0 !text-lg">24小时内热门文档</Typography.Title>
+        <Link href={routes.documents} className="flex items-center gap-1 text-sm text-amber-500 hover:text-amber-600">
+          查看全部 <RightOutlined style={{ fontSize: 11 }} />
         </Link>
       </div>
-      <div className="mb-4 flex items-center gap-4">
-        <Segmented
-          size="small"
-          value={docTab}
-          options={[
-            { label: '热门', value: 'hot' },
-            { label: '最新', value: 'latest' },
-            { label: '我的', value: 'mine' },
-          ]}
-          onChange={(v) => setDocTab(v as DocTab)}
-        />
-      </div>
       {loading ? (
-        <Skeleton active paragraph={{ rows: 3 }} />
+        <div className="flex gap-4 overflow-hidden">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="h-56 w-64 shrink-0 rounded-xl border border-slate-100 p-4">
+              <Skeleton active paragraph={{ rows: 3 }} title={false} />
+            </div>
+          ))}
+        </div>
       ) : documents.length === 0 ? (
         <div className="py-10">
           <Empty description="暂无热门文档" image={Empty.PRESENTED_IMAGE_SIMPLE} />
         </div>
       ) : (
-        <div className="space-y-3">
-          {documents.map((doc) => (
-            <div
-              key={doc.id}
-              className="flex items-start gap-3 cursor-pointer rounded-lg border border-slate-100 p-3 transition-colors hover:bg-slate-50"
-            >
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium text-slate-800 line-clamp-1">{doc.title}</div>
-                <div className="mt-1 text-xs text-slate-400 line-clamp-1">{doc.summary}</div>
+        <div className="flex gap-4 overflow-x-auto pb-1">
+          {documents.slice(0, 8).map((doc, index) => {
+            const accents = [
+              'bg-rose-50 text-rose-500',
+              'bg-blue-50 text-blue-500',
+              'bg-emerald-50 text-emerald-500',
+              'bg-amber-50 text-amber-500',
+              'bg-violet-50 text-violet-500',
+              'bg-cyan-50 text-cyan-500',
+            ];
+            return (
+              <div
+                key={doc.id}
+                className={`flex h-56 w-64 shrink-0 cursor-pointer flex-col rounded-xl border border-slate-100 p-4 transition-all hover:-translate-y-0.5 hover:shadow-md ${accents[index % accents.length]}`}
+              >
+                <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-white/70 text-2xl font-black leading-none">“</div>
+                <div className="line-clamp-2 text-base font-bold leading-snug text-slate-800">{doc.title}</div>
+                <div className="mt-3 line-clamp-3 flex-1 text-sm leading-relaxed text-slate-500">{doc.summary}</div>
+                <div className="mt-3 border-t border-white/70 pt-3 text-sm text-slate-400">
+                  <div className="flex items-center justify-between">
+                    <span className="truncate">{doc.researcher_name}</span>
+                    <span className="flex items-center gap-1"><EyeOutlined />{doc.view_count}</span>
+                  </div>
+                </div>
               </div>
-              <div className="shrink-0 text-right text-xs text-slate-400">
-                <div>{doc.researcher_name}</div>
-                <div>{doc.view_count} 浏览</div>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -293,24 +385,28 @@ function HotDocumentsSection({
 }
 
 /** 排行榜单行 */
-function RankRow({ item, sortBy }: { item: PublicRankItem; sortBy: RankSortBy }) {
+function RankRow({ item, sortBy, rank }: { item: PublicRankItem; sortBy: RankSortBy; rank: number }) {
   const yieldRate = sortBy === 'today' ? item.today_yield_rate : item.month_yield_rate;
+  const subRate = sortBy === 'today' ? item.month_yield_rate : item.today_yield_rate;
   return (
-    <div className="flex items-center gap-3 py-2.5 border-b border-slate-50 last:border-b-0">
-      {/* 彩色头像 */}
-      <div className={`w-8 h-8 rounded-lg overflow-hidden shrink-0 ${getAvatarBg(item.name)}`}>
-        <Image src={getAvatarSrc(item.name)} alt={item.name} width={32} height={32} className="w-full h-full object-cover" />
+    <div className="flex items-center gap-3 rounded-lg border border-slate-100 bg-white px-3.5 py-3 transition-colors hover:bg-slate-50">
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-100 bg-slate-50 text-sm font-bold text-slate-400">
+        {rank}
       </div>
       <div className="min-w-0 flex-1">
-        <span className="truncate text-sm font-medium text-slate-700">{item.name}</span>
-        <div className="flex items-center gap-2 text-xs">
-          <span className={yieldColor(yieldRate)}>{formatPct(yieldRate)}</span>
-          <span className="text-slate-400">
-            {sortBy === 'today' ? formatPct(item.month_yield_rate) : formatPct(item.today_yield_rate)}
-          </span>
+        <div className="flex items-center gap-2">
+          <div className={`h-7 w-7 overflow-hidden rounded-full ${getAvatarBg(item.name)}`}>
+            <Image src={getAvatarSrc(item.name)} alt={item.name} width={28} height={28} className="h-full w-full object-cover" />
+          </div>
+          <span className="truncate text-sm font-semibold text-slate-700">{item.name}</span>
+          <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-500">{item.risk_note}</span>
+        </div>
+        <div className="mt-1 flex items-center gap-2 text-xs">
+          <span className={yieldColor(yieldRate)}>今日 {formatPct(yieldRate)}</span>
+          <span className={yieldColor(subRate)}>本月 {formatPct(subRate)}</span>
         </div>
       </div>
-      <div className="shrink-0 text-right text-sm text-slate-600">{formatAsset(item.total_asset)}</div>
+      <div className="shrink-0 text-right text-sm font-semibold text-slate-500">{formatWan(item.total_asset)}</div>
     </div>
   );
 }
@@ -327,29 +423,23 @@ function RankingSection({
   sortBy: RankSortBy;
   onSortChange: (value: RankSortBy) => void;
 }) {
-  const leftCol = rankings.filter((_, i) => i % 2 === 0);
-  const rightCol = rankings.filter((_, i) => i % 2 === 1);
-
   return (
-    <div className="rounded-lg bg-white p-4 sm:p-5">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+    <div className="rounded-lg border border-slate-100 bg-white p-4">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-3">
-          <Typography.Title level={5} className="!mb-0">模拟交易排名</Typography.Title>
-          <Tag color="purple" className="!text-xs">全市场研究员</Tag>
+          <Typography.Title level={5} className="!mb-0 !text-lg">模拟交易排名</Typography.Title>
+          <span className="text-sm text-slate-400">公开研究员</span>
         </div>
         <div className="flex items-center gap-2">
           <Segmented
             size="small"
             value={sortBy}
             options={[
-              { label: '今日排名', value: 'today' },
-              { label: '本月排名', value: 'month' },
+              { label: '今日收益率', value: 'today' },
+              { label: '本月收益率', value: 'month' },
             ]}
             onChange={(v) => onSortChange(v as RankSortBy)}
           />
-          <Link href="#" className="text-xs text-brand-500 hover:text-brand-600 flex items-center gap-0.5 ml-2">
-            全部排名 <RightOutlined style={{ fontSize: 10 }} />
-          </Link>
         </div>
       </div>
       {loading ? (
@@ -357,9 +447,10 @@ function RankingSection({
       ) : rankings.length === 0 ? (
         <Empty description="暂无排名数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />
       ) : (
-        <div className="grid grid-cols-1 gap-x-6 lg:grid-cols-2">
-          <div>{leftCol.map((item) => <RankRow key={item.researcher_id} item={item} sortBy={sortBy} />)}</div>
-          <div>{rightCol.map((item) => <RankRow key={item.researcher_id} item={item} sortBy={sortBy} />)}</div>
+        <div className={`grid grid-cols-1 gap-3 ${rankings.length > 1 ? 'lg:grid-cols-2' : ''}`}>
+          {rankings.map((item, index) => (
+            <RankRow key={item.researcher_id} item={item} sortBy={sortBy} rank={index + 1} />
+          ))}
         </div>
       )}
     </div>
@@ -396,52 +487,53 @@ function LatestDocuments({
     return <div className="py-8 text-center text-sm text-slate-400">暂无最新制品</div>;
   }
   return (
-    <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-thin">
-      {documents.map((doc) => (
-        <div
-          key={doc.id}
-          className="w-60 shrink-0 cursor-pointer rounded-xl border border-slate-200 bg-white p-4 transition-shadow hover:shadow-md flex flex-col"
-        >
-          {/* 顶部：引号图标 + 日期标题 */}
-          <div className="flex items-start gap-2.5 mb-3">
-            <div className="w-8 h-8 rounded-full bg-brand-500 flex items-center justify-center shrink-0">
-              <span className="text-white font-bold text-lg leading-none" style={{ fontFamily: 'Georgia, serif' }}>&ldquo;</span>
-            </div>
-            <div className="text-sm font-semibold text-slate-800 leading-snug line-clamp-2">
-              {formatDate(doc.create_time)} {doc.title}
-            </div>
-          </div>
-
-          {/* 内容摘要 */}
-          <div className="flex-1 text-xs text-slate-500 leading-relaxed line-clamp-3 mb-3">
-            {doc.summary}
-          </div>
-
-          {/* 底部信息 */}
-          <div className="border-t border-slate-100 pt-2.5 space-y-1.5">
-            <div className="flex items-center gap-1.5 text-xs text-brand-500">
-              <div className={`w-4 h-4 rounded overflow-hidden shrink-0 ${getAvatarBg(researcherName)}`}>
-                <Image src={getAvatarSrc(researcherName)} alt="" width={16} height={16} />
+    <div className="flex gap-3 overflow-x-auto pb-1 scrollbar-thin">
+      {documents.slice(0, 8).map((doc, index) => {
+        const accents = [
+          'bg-rose-50',
+          'bg-blue-50',
+          'bg-emerald-50',
+          'bg-amber-50',
+          'bg-violet-50',
+          'bg-cyan-50',
+        ];
+        return (
+          <div
+            key={doc.id}
+            className={`flex h-48 w-52 shrink-0 cursor-pointer flex-col rounded-lg border border-slate-100 p-3.5 transition-all hover:-translate-y-0.5 hover:shadow-md ${accents[index % accents.length]}`}
+          >
+            <div className="mb-2.5 flex items-start gap-2.5">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/80 text-xl font-black leading-none text-brand-500">“</div>
+              <div className="line-clamp-2 text-sm font-bold leading-snug text-slate-800">
+                {formatDate(doc.create_time)} {doc.title}
               </div>
-              <span>{researcherName}</span>
             </div>
-            <div className="flex items-center justify-between text-xs text-slate-400">
+            <div className="line-clamp-3 flex-1 text-xs leading-relaxed text-slate-500">{doc.summary}</div>
+            <div className="mt-2.5 border-t border-white/70 pt-2">
+              <div className="mb-1.5 flex items-center gap-1.5 text-xs text-brand-500">
+                <div className={`h-5 w-5 shrink-0 overflow-hidden rounded ${getAvatarBg(researcherName)}`}>
+                  <Image src={getAvatarSrc(researcherName)} alt="" width={20} height={20} />
+                </div>
+                <span className="truncate">{researcherName}</span>
+              </div>
+              <div className="flex items-center justify-between text-xs text-slate-400">
               <span className="flex items-center gap-2">
                 <span className="flex items-center gap-0.5"><EyeOutlined /> {doc.view_count}</span>
                 <span className="flex items-center gap-0.5"><MessageOutlined /> {doc.comment_count}</span>
               </span>
-              <span>自筹 {timeAgo(doc.create_time)}</span>
+                <span>{timeAgo(doc.create_time)}</span>
+              </div>
             </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
 
 /**
  * 模拟账户区块
- * 对标截图：左侧显示总资产/今日盈亏/收益率 + 持仓资金/可用资金
+ * 对标截图：左侧显示总资产/今日盈亏/今日收益率 + 持仓资金/可用资金
  *           右侧显示持仓表格（股票/数量/成本价）
  */
 function PortfolioSection({ researcher }: { researcher: HiredResearcher }) {
@@ -452,20 +544,19 @@ function PortfolioSection({ researcher }: { researcher: HiredResearcher }) {
   const acct = snapshotQuery.data?.account;
   const positions = snapshotQuery.data?.positions ?? [];
 
-  /** 今日收益率 = 今日盈亏 / 总资产 */
-  const totalPnlPct = acct && acct.total_asset > 0
-    ? acct.daily_pnl / acct.total_asset
-    : 0;
+  const todayPnl = acct?.daily_pnl ?? 0;
+  const todayStartAsset = acct ? acct.total_asset - todayPnl : 1_000_000;
+  const todayPnlPct = todayStartAsset > 0 ? todayPnl / todayStartAsset : 0;
 
   /** 当前月份 */
   const currentMonth = `${new Date().getMonth() + 1}月`;
 
   return (
-    <div className="rounded-xl bg-white p-4 sm:p-5">
+    <div className="rounded-lg border border-slate-100 bg-white p-3.5">
       {/* 标题行 —— 对标截图样式 */}
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Typography.Title level={5} className="!mb-0">模拟账户</Typography.Title>
+          <Typography.Title level={5} className="!mb-0 !text-base">模拟账户</Typography.Title>
           <span className="text-xs text-slate-400">当前持仓</span>
           <span className="text-xs text-slate-400">{currentMonth}</span>
           <span className="flex items-center gap-1.5 text-xs text-slate-400">
@@ -484,11 +575,11 @@ function PortfolioSection({ researcher }: { researcher: HiredResearcher }) {
       {/* 加载态 */}
       {loading && <Skeleton active paragraph={{ rows: 5 }} />}
 
-      {/* 数据态 —— 左右分栏，左侧顶部对齐避免空白 */}
+      {/* 数据态 —— 对标目标站：左侧账户指标 + 中间持仓表 + 右侧成长/致谢卡 */}
       {!loading && acct && (
-        <div className="flex flex-col lg:flex-row items-start gap-5">
+        <div className="grid grid-cols-1 gap-3 xl:grid-cols-[180px_minmax(480px,1fr)_200px_200px]">
           {/* ── 左侧：账户概览（紧凑布局） ── */}
-          <div className="w-full lg:w-56 shrink-0 space-y-3">
+          <div className="space-y-3">
             {/* 总资产 */}
             <div>
               <div className="text-xs text-slate-400 mb-0.5">总资产</div>
@@ -497,15 +588,15 @@ function PortfolioSection({ researcher }: { researcher: HiredResearcher }) {
               </div>
             </div>
 
-            {/* 今日盈亏 + 收益率（折行显示） */}
+            {/* 今日盈亏 + 今日收益率（折行显示） */}
             <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
               <span className="text-xs text-slate-400">今日盈亏</span>
-              <span className={`text-base font-bold ${yieldColor(acct.daily_pnl)}`}>
-                {acct.daily_pnl > 0 ? '+' : ''}{formatMoney(acct.daily_pnl)}
+              <span className={`text-base font-bold ${yieldColor(todayPnl)}`}>
+                {todayPnl > 0 ? '+' : ''}{formatMoney(todayPnl)}
               </span>
               <span className="text-xs text-slate-400">今日收益率</span>
-              <span className={`text-sm font-semibold ${yieldColor(totalPnlPct)}`}>
-                {formatPct(totalPnlPct)}
+              <span className={`text-sm font-semibold ${yieldColor(todayPnlPct)}`}>
+                {formatPct(todayPnlPct)}
               </span>
             </div>
 
@@ -523,17 +614,17 @@ function PortfolioSection({ researcher }: { researcher: HiredResearcher }) {
           </div>
 
           {/* ── 右侧：持仓表格（最多显示5行，超出滚动） ── */}
-          <div className="flex-1 min-w-0">
-            <div className="overflow-x-auto overflow-y-auto max-h-[284px]">
+          <div className="min-w-0">
+            <div className="max-h-[190px] overflow-x-auto overflow-y-auto">
               <table className="w-full text-sm">
                 <thead className="sticky top-0 bg-white z-10">
                   <tr className="border-b border-slate-100 text-left text-xs text-slate-400">
-                    <th className="py-2 px-2 font-medium">股票</th>
-                    <th className="py-2 px-2 font-medium text-right">数量</th>
-                    <th className="py-2 px-2 font-medium text-right">成本价</th>
-                    <th className="py-2 px-2 font-medium text-right">现价</th>
-                    <th className="py-2 px-2 font-medium text-right">盈亏</th>
-                    <th className="py-2 px-2 font-medium text-right">盈亏%</th>
+                    <th className="px-2 py-2 font-medium">股票</th>
+                    <th className="px-2 py-2 font-medium text-right">数量</th>
+                    <th className="px-2 py-2 font-medium text-right">成本价</th>
+                    <th className="px-2 py-2 font-medium text-right">现价</th>
+                    <th className="px-2 py-2 font-medium text-right">盈亏</th>
+                    <th className="px-2 py-2 font-medium text-right">盈亏%</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -545,19 +636,19 @@ function PortfolioSection({ researcher }: { researcher: HiredResearcher }) {
                     </tr>
                   ) : positions.map((p) => (
                     <tr key={p.symbol} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
-                      <td className="py-2.5 px-2">
+                      <td className="px-2 py-2">
                         <div className="font-medium text-slate-800">{p.name}</div>
                         <div className="text-xs text-slate-400">{p.symbol}</div>
                       </td>
-                      <td className="py-2.5 px-2 text-right text-slate-600">{p.quantity}</td>
-                      <td className="py-2.5 px-2 text-right text-slate-600">{p.cost_price.toFixed(2)}</td>
-                      <td className="py-2.5 px-2 text-right text-slate-600">{p.current_price.toFixed(2)}</td>
-                      <td className="py-2.5 px-2 text-right">
+                      <td className="px-2 py-2 text-right text-slate-600">{p.quantity}</td>
+                      <td className="px-2 py-2 text-right text-slate-600">{p.cost_price.toFixed(2)}</td>
+                      <td className="px-2 py-2 text-right text-slate-600">{p.current_price.toFixed(2)}</td>
+                      <td className="px-2 py-2 text-right">
                         <div className={`font-semibold ${yieldColor(p.pnl)}`}>
                           {p.pnl > 0 ? '+' : ''}{p.pnl.toFixed(2)}
                         </div>
                       </td>
-                      <td className="py-2.5 px-2 text-right">
+                      <td className="px-2 py-2 text-right">
                         <div className={`text-xs font-semibold ${yieldColor(p.pnl)}`}>
                           {p.cost_price > 0
                             ? `${((p.current_price - p.cost_price) / p.cost_price * 100).toFixed(2)}%`
@@ -569,6 +660,26 @@ function PortfolioSection({ researcher }: { researcher: HiredResearcher }) {
                 </tbody>
               </table>
             </div>
+          </div>
+
+          <div className="rounded-lg border border-cyan-200 bg-cyan-50 p-3">
+            <div className="mb-2 flex items-center justify-between text-xs text-cyan-700">
+              <span>成长Token余量</span>
+              <span className="rounded-full border border-cyan-200 px-1.5">?</span>
+            </div>
+            <div className="text-2xl font-black text-cyan-600">981.8K</div>
+            <div className="mt-1 text-xs text-slate-400">累计接收 78743.2K　已消耗 77761.4K</div>
+            <button className="mt-8 w-full rounded-md bg-cyan-100 py-1.5 text-xs font-medium text-cyan-700 transition-colors hover:bg-cyan-200" type="button">
+              捐赠
+            </button>
+          </div>
+
+          <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+            <div className="mb-2 flex items-center justify-between text-xs text-amber-600">
+              <span>致谢榜Top5</span>
+              <span className="text-xs text-slate-300">今日捐赠</span>
+            </div>
+            <div className="flex h-[110px] items-center justify-center text-xs text-slate-300">暂无捐赠</div>
           </div>
         </div>
       )}
@@ -585,11 +696,11 @@ function WorkLogSection() {
   ];
 
   return (
-    <div className="rounded-xl bg-white p-4 sm:p-5">
+    <div className="rounded-lg border border-slate-100 bg-white p-3">
       <div className="mb-3 flex items-center justify-between">
-        <Typography.Title level={5} className="!mb-0">工作日志</Typography.Title>
-        <Link href="#" className="text-xs text-brand-500 hover:text-brand-600 flex items-center gap-0.5">
-          查看全部 <RightOutlined style={{ fontSize: 10 }} />
+        <Typography.Title level={5} className="!mb-0 !text-sm text-amber-600">工作日志</Typography.Title>
+        <Link href="#" className="flex items-center gap-0.5 text-xs text-amber-500 hover:text-amber-600">
+          查看详情 <RightOutlined style={{ fontSize: 10 }} />
         </Link>
       </div>
       <Timeline
@@ -601,11 +712,54 @@ function WorkLogSection() {
                 <span>{log.time}</span>
                 <Tag className="!text-xs !px-1.5 !py-0">{log.type}</Tag>
               </div>
-              <div className="mt-1 text-sm text-slate-600 line-clamp-2">{log.content}</div>
+              <div className="mt-1 line-clamp-3 text-xs leading-relaxed text-slate-600">{log.content}</div>
             </div>
           ),
         }))}
       />
+    </div>
+  );
+}
+
+function GrowthViewSection({ researcher }: { researcher: HiredResearcher }) {
+  return (
+    <div className="rounded-lg border border-slate-100 bg-white p-3.5">
+      <Typography.Title level={5} className="!mb-3 !text-base">24小时成长视图</Typography.Title>
+        <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1fr_260px]">
+          <div className="relative min-h-[320px] overflow-hidden rounded-lg border border-slate-100 bg-slate-50">
+            <div className="absolute inset-0 bg-[linear-gradient(#e5e7eb_1px,transparent_1px),linear-gradient(90deg,#e5e7eb_1px,transparent_1px)] bg-[size:28px_28px] opacity-40" />
+          <div className="absolute left-4 top-4 rounded-lg bg-white px-3.5 py-2.5 text-sm shadow-sm">
+            <div className="font-semibold text-slate-700">{researcher.name}</div>
+            <div className="mt-1.5 flex gap-2 text-xs text-slate-400">
+              <span>研究员</span>
+              <span>知识</span>
+              <span>洞察</span>
+              <span>互动</span>
+              <span>制品</span>
+              <span>交易</span>
+              <span>任务</span>
+            </div>
+          </div>
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="rounded-lg border border-blue-300 bg-white px-5 py-2.5 text-sm font-semibold text-blue-500 shadow-sm">
+              {researcher.name}
+            </div>
+          </div>
+          <div className="absolute bottom-4 left-4 space-y-1 rounded-lg bg-white p-1 shadow-sm">
+            <button className="block h-6 w-6 rounded text-slate-400 hover:bg-slate-50" type="button">+</button>
+            <button className="block h-6 w-6 rounded text-slate-400 hover:bg-slate-50" type="button">-</button>
+            <button className="block h-6 w-6 rounded text-slate-400 hover:bg-slate-50" type="button">↻</button>
+          </div>
+          <div className="absolute bottom-4 right-4 flex gap-2 rounded-lg bg-white/90 px-3 py-2 text-xs text-slate-400 shadow-sm">
+            <span className="text-blue-500">研究员</span>
+            <span className="text-emerald-500">知识</span>
+            <span className="text-amber-500">洞察</span>
+            <span className="text-rose-500">交易</span>
+            <span>任务</span>
+          </div>
+        </div>
+        <WorkLogSection />
+      </div>
     </div>
   );
 }
@@ -626,13 +780,13 @@ function ResearcherDetailView({
   const [tab, setTab] = useState<'overview' | 'settings'>('overview');
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {/* ── Header：研究员信息 ── */}
-      <div className="rounded-xl bg-white p-4 sm:p-5">
+      <div className="rounded-lg border border-slate-100 bg-white px-3.5 py-3">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             {/* 彩色头像 */}
-            <div className={`w-10 h-10 rounded-lg overflow-hidden ${getAvatarBg(researcher.name)}`}>
+            <div className={`h-10 w-10 overflow-hidden rounded-lg ${getAvatarBg(researcher.name)}`}>
               <Image
                 src={getAvatarSrc(researcher.name)}
                 alt={researcher.name}
@@ -643,7 +797,7 @@ function ResearcherDetailView({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-lg font-bold text-slate-800">{researcher.name}</span>
+                <span className="text-base font-bold text-slate-800">{researcher.name}</span>
                 {/* 黄色等级标签 —— 对标截图 "中国研究员" */}
                 <span className="inline-flex items-center gap-1 rounded-full bg-amber-400 px-2.5 py-0.5 text-xs font-medium text-white">
                   {researcher.level || '中国研究员'}
@@ -659,16 +813,16 @@ function ResearcherDetailView({
           </div>
 
           {/* 操作按钮 */}
-          <div className="flex flex-wrap items-center gap-2">
-            <Button size="small" icon={<RocketOutlined />}>执行任务</Button>
-            <Button size="small" icon={<FormOutlined />}>制造文稿</Button>
-            <Button size="small" icon={<SendOutlined />}>发送任务</Button>
-            <Button size="small" type="primary" icon={<PlusOutlined />}>新增任务</Button>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Button size="small" icon={<AppstoreOutlined />}>待办列表 0</Button>
+            <Button size="small" icon={<FileTextOutlined />}>制品仓库</Button>
+            <Button size="small" icon={<ClockCircleOutlined />}>定时任务</Button>
+            <Button size="small" type="primary" icon={<PlusOutlined />}>发布任务</Button>
           </div>
         </div>
 
         {/* Tab 切换 —— 概览 / 设置 */}
-        <div className="mt-4">
+        <div className="mt-3">
           <Segmented
             value={tab}
             options={[
@@ -684,10 +838,10 @@ function ResearcherDetailView({
       {tab === 'overview' && (
         <>
           {/* 最新制品 —— 横向滚动卡片 */}
-          <div className="rounded-xl bg-white p-4 sm:p-5">
+          <div className="rounded-lg border border-slate-100 bg-white p-3.5">
             <div className="mb-3 flex items-center justify-between">
-              <Typography.Title level={5} className="!mb-0">最新制品</Typography.Title>
-              <Link href="#" className="text-xs text-brand-500 hover:text-brand-600 flex items-center gap-0.5">
+              <Typography.Title level={5} className="!mb-0 !text-base">最新制品</Typography.Title>
+              <Link href="#" className="flex items-center gap-0.5 text-xs text-brand-500 hover:text-brand-600">
                 所有制品 <RightOutlined style={{ fontSize: 10 }} />
               </Link>
             </div>
@@ -701,13 +855,13 @@ function ResearcherDetailView({
           {/* 模拟账户 */}
           <PortfolioSection researcher={researcher} />
 
-          {/* 工作日志 */}
-          <WorkLogSection />
+          {/* 24小时成长视图 */}
+          <GrowthViewSection researcher={researcher} />
         </>
       )}
 
       {tab === 'settings' && (
-        <div className="rounded-xl bg-white p-6 sm:p-8 text-center">
+        <div className="rounded-lg border border-slate-100 bg-white p-6 text-center">
           <SettingOutlined className="text-4xl text-slate-300" />
           <div className="mt-3 text-slate-400">研究员配置面板（技能/知识库/提示词编辑）开发中...</div>
         </div>
@@ -735,9 +889,9 @@ export default function AIResearcherWorkstationPage() {
   const selectedDocuments = activeDocuments.length > 0 ? activeDocuments : hotDocuments;
 
   return (
-    <div className="flex flex-col md:flex-row gap-4" style={{ minHeight: 'calc(100vh - 56px - 40px)' }}>
+    <div className="flex flex-col gap-3 md:flex-row" style={{ minHeight: 'calc(100vh - 56px - 40px)' }}>
       {/* ── 左侧面板 ── */}
-      <div className="w-full md:w-52 shrink-0 rounded-xl bg-white border border-slate-100">
+      <div className="w-full shrink-0 rounded-lg border border-slate-100 bg-white md:w-52">
         {/* 移动端横滑列表 */}
         <div className="md:hidden p-3 space-y-2">
           <div className="text-sm font-bold text-slate-800 mb-1">AI研究员</div>
@@ -784,7 +938,7 @@ export default function AIResearcherWorkstationPage() {
       </div>
 
       {/* ── 右侧主区域 ── */}
-      <div className="min-w-0 flex-1 space-y-4">
+      <div className="min-w-0 flex-1 space-y-3">
         {activeResearcher ? (
           <ResearcherDetailView
             researcher={activeResearcher}
@@ -793,12 +947,11 @@ export default function AIResearcherWorkstationPage() {
           />
         ) : (
           <>
-            <div className="rounded-xl bg-white p-4 sm:p-5">
-              <Typography.Title level={4} className="!mb-1">AI研究员</Typography.Title>
-              <Typography.Text type="secondary" className="text-sm">
-                辅助您投研决策的垂直领域专家，管理已雇佣的AI研究员
-              </Typography.Text>
-            </div>
+            <ResearcherCardsSection
+              researchers={hiredResearchers}
+              loading={overviewQuery.isLoading}
+              onSelect={setActiveId}
+            />
             <HotDocumentsSection documents={hotDocuments} loading={overviewQuery.isLoading} />
             <RankingSection
               rankings={publicRankings}

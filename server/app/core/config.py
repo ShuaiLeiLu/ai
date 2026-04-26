@@ -21,7 +21,7 @@ def _find_env_file() -> str:
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=_find_env_file(), extra="ignore")
 
-    app_name: str = Field(default="赛博投研", alias="APP_NAME")
+    app_name: str = Field(default="极睿智投", alias="APP_NAME")
     app_env: str = Field(default="local", alias="APP_ENV")
     app_version: str = Field(default="0.1.0", alias="APP_VERSION")
     debug: bool = Field(default=True, alias="DEBUG")
@@ -49,6 +49,17 @@ class Settings(BaseSettings):
     openai_base_url: str | None = Field(default=None, alias="OPENAI_BASE_URL")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
     openai_model: str | None = Field(default=None, alias="OPENAI_MODEL")
+
+    jin10_mcp_server_url: str = Field(
+        default="https://mcp.jin10.com/mcp",
+        alias="JIN10_MCP_SERVER_URL",
+    )
+    jin10_mcp_bearer_token: str | None = Field(default=None, alias="JIN10_MCP_BEARER_TOKEN")
+    jin10_mcp_protocol_version: str = Field(
+        default="2025-11-25",
+        alias="JIN10_MCP_PROTOCOL_VERSION",
+    )
+    jin10_mcp_timeout: float = Field(default=20.0, alias="JIN10_MCP_TIMEOUT")
 
     @field_validator("cors_origins", mode="before")
     @classmethod

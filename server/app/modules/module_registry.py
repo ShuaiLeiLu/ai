@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from importlib import import_module
-from typing import Iterable, Sequence
 
 from fastapi import APIRouter
 
@@ -60,6 +60,7 @@ def get_default_module_registry() -> ModuleRegistry:
             ModuleSpec(name="tasks", router_module="app.modules.tasks.router"),
             ModuleSpec(name="news", router_module="app.modules.news.router"),
             ModuleSpec(name="news_analysis", router_module="app.modules.news_analysis.router"),
+            ModuleSpec(name="market_data", router_module="app.modules.market_data.router"),
             ModuleSpec(name="preopen", router_module="app.modules.preopen.router"),
             ModuleSpec(name="community", router_module="app.modules.community.router"),
             ModuleSpec(name="notes", router_module="app.modules.notes.router"),

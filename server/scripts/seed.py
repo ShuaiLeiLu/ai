@@ -7,10 +7,10 @@
 
 插入内容：
   - 1 个演示用户（13800138000）
-  - 1 个 AI 研究员（小市值轮动）+ 策略配置 + 雇佣关系
+  - 2 个 AI 研究员（小市值轮动、超短情绪）+ 策略配置 + 雇佣关系
   - 2 篇研究文档
   - 2 个社区帖子 + 若干评论
-  - 1 个模拟交易账户（初始资金 10 万）
+  - 每个研究员 1 个模拟交易账户（初始资金 100 万）
 
 注意：脚本幂等 —— 先清空旧数据再重新插入。
 """
@@ -20,11 +20,9 @@ import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-
 from app.core.config import get_settings
-
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 # ── 工具函数 ──
 
@@ -53,7 +51,7 @@ DEMO_USER_PHONE = "13800138000"
 DEMO_USER_PASSWORD = "test1234"
 DEMO_USER_NICKNAME = "赛博投研员"
 
-# ── 研究员配置（仅保留「小市值轮动」）──
+# ── 研究员配置 ──
 RESEARCHERS = [
     {
         "name": "小市值轮动",
@@ -70,7 +68,8 @@ RESEARCHERS = [
             "### 选股体系（三因子融合）\n"
             "1. **SG因子**：5年营业收入增长率（sales_growth）前10%，过滤EPS≤0，按流通市值升序\n"
             "2. **MS因子（复合成长因子）**：\n"
-            "   - 营收增长率权重10% + 利润总额增长率权重35% + 净利润增长率权重15% + 盈利增长率权重40%\n"
+            "   - 营收增长率权重10% + 利润总额增长率权重35% + "
+            "净利润增长率权重15% + 盈利增长率权重40%\n"
             "   - 综合评分前10%，过滤EPS≤0，按流通市值升序\n"
             "3. **PEG因子**：PEG前20% → 换手率波动率前50%，按流通市值升序\n"
             "4. **合并**：三池取并集 → 按流通市值升序 → 取前10只\n\n"
@@ -189,7 +188,178 @@ RESEARCHERS = [
             "notification": {
                 "webhook_enabled": True,
                 "server_sync_enabled": True,
-                "events": ["trade", "stop_loss", "limit_up_open", "daily_summary", "position_report"],
+                "events": [
+                    "trade",
+                    "stop_loss",
+                    "limit_up_open",
+                    "daily_summary",
+                    "position_report",
+                ],
+            },
+        },
+    },
+    {
+        "name": "超短情绪",
+        "title": "A股情绪超短高低切策略研究员",
+        "style": "情绪周期+龙头接力+严格风控",
+        "description": (
+            "围绕A股超短情绪周期执行交易：盘后定预案，盘中认承接。"
+            "用涨跌停、昨日涨停开盘溢价、连板高度、炸板率和题材联动判断情绪，"
+            "按冰点、退潮、启动、发酵、高潮切换低吸、打板和半路模式。"
+        ),
+        "prompt": (
+            "你是一名名叫「超短情绪」的A股情绪超短研究员。\n\n"
+            "## 核心认知\n"
+            "- 情绪定涨跌，位置定盈亏，龙头掌方向，预期差赚银子。\n"
+            "- 盘后定预案，盘中做确认；不做无准备交易，不买不符合预期的标的。\n"
+            "- 主板是基本盘，创业板/科创板只做主线第一个20cm领涨龙头。\n\n"
+            "## 情绪打分\n"
+            "总分100分，核心60分+辅助40分：涨停数量20分、跌停数量20分、"
+            "昨日涨停开盘溢价20分、连板高度突破15分、炸板率15分、主线题材涨停数量10分。\n"
+            "0-15为冰点，15-30为退潮，30-55为启动/弱修复，55-80为发酵，80-100为高潮。\n\n"
+            "## 交易模式\n"
+            "- 冰点：轻仓试错第一个突破近10日连板高度的破局龙。\n"
+            "- 退潮：原则不开新仓，只处理持仓；只保本金，不追反弹。\n"
+            "- 启动：破局龙首次突破只打板确认，次日-3%到+1%允许低吸。\n"
+            "- 发酵：主线龙头打板，主线补涨9:40-10:30按5%-8%半路确认。\n"
+            "- 高潮：不开新仓，只持有核心并按信号止盈。\n\n"
+            "## 股票池和过滤\n"
+            "- 主板为核心交易池；ST、北交所、上市1个月内新股排除。\n"
+            "- 流通市值20亿-150亿，最佳30亿-100亿；日均成交额大于1亿。\n"
+            "- 启动首板换手5%-25%，炸板超过2次不打，封单金额需不低于流通市值1%。\n\n"
+            "## 风控纪律\n"
+            "- 主板单票不超过20%，20cm单票不超过15%。\n"
+            "- 固定止损5%，盈利10%先卖一半，盈利15%清仓；强势连板龙头可拿到不涨停再走。\n"
+            "- 最长持仓3个交易日，连续3笔亏损或账户回撤超10%暂停交易。\n"
+        ),
+        "status": "active",
+        "visibility": "public",
+        "publish_status": "published",
+        "level": "LV.3",
+        "today_pnl": 0.0,
+        "win_rate_30d": 0.0,
+        "tags": ["情绪周期", "超短", "龙头", "高低切", "模拟盘"],
+        "skills": [
+            "skill_sentiment_cycle",
+            "skill_limit_up_ladder",
+            "skill_intraday_execution",
+            "skill_risk_management",
+        ],
+        "knowledge_bases": ["kb_market_daily", "kb_limit_up_pool", "kb_hot_topics"],
+        "mcp_servers": ["mcp_financial_news", "mcp_fund_flow"],
+        "self_drive_tasks": [
+            "15:10 盘后计算情绪分数并生成次日预案",
+            "9:30-9:40 校验破局龙低吸条件",
+            "9:40-10:30 校验主线补涨半路条件",
+            "盘中只在打板确认、低吸窗口、半路窗口内触发交易",
+            "14:00 检查涨停持仓是否开板",
+            "15:05 输出情绪周期、持仓和风控复盘",
+        ],
+        "hire_count": 42,
+        "strategy_config": {
+            "strategy_type": "sentiment_ultrashort",
+            "description": "A股情绪超短高低切/破局龙头策略 v1.0",
+            "benchmark": "000001.XSHG",
+            "max_single_position_ratio": 0.20,
+            "max_20cm_position_ratio": 0.15,
+            "max_daily_new_positions": 2,
+            "max_daily_new_positions_strong": 3,
+            "allow_20cm_front_runner": True,
+            "emotion_score": {
+                "total": 100,
+                "core_weight": 60,
+                "aux_weight": 40,
+                "recent_height_days": 10,
+                "stages": {
+                    "ice": [0, 15],
+                    "retreat": [15, 30],
+                    "launch": [30, 55],
+                    "fermentation": [55, 80],
+                    "climax": [80, 100],
+                },
+            },
+            "filters": {
+                "exclude_st": True,
+                "exclude_bj": True,
+                "exclude_new_days": 30,
+                "min_circulating_market_cap": 2000000000,
+                "max_circulating_market_cap": 15000000000,
+                "best_circulating_market_cap_min": 3000000000,
+                "best_circulating_market_cap_max": 10000000000,
+                "min_daily_amount": 100000000,
+                "min_turnover_ratio": 5,
+                "max_turnover_ratio": 25,
+                "max_break_count": 2,
+                "low_position_percentile_1y": 0.20,
+            },
+            "topic_confirmation": {
+                "launch_min_limit_up": 3,
+                "fermentation_min_limit_up": 5,
+                "halfway_min_follow_limit_up": 2,
+            },
+            "low_absorb": {
+                "start": "09:30",
+                "end": "09:40",
+                "min_open_pct": -3,
+                "max_open_pct": 1,
+                "observe_max_open_pct": 3,
+                "observe_budget_multiplier": 0.5,
+            },
+            "halfway": {
+                "start": "09:40",
+                "end": "10:30",
+                "min_change_pct": 5,
+                "max_change_pct": 8,
+            },
+            "board_buy": {
+                "prefer_morning_board": True,
+                "latest_first_seal_time": "143000",
+                "min_seal_amount_ratio": 0.01,
+                "exclude_one_word_board": True,
+                "exclude_t_board": True,
+            },
+            "position_limits": {
+                "ice": 0.20,
+                "retreat": 0.20,
+                "launch": 0.40,
+                "fermentation": 0.70,
+                "climax": 0.30,
+            },
+            "risk_control": {
+                "stop_loss": -0.05,
+                "take_profit_half": 0.10,
+                "take_profit_full": 0.15,
+                "max_hold_days": 3,
+                "pause_after_loss_count": 3,
+                "pause_after_account_drawdown": 0.10,
+            },
+            "cost": {
+                "open_tax": 0,
+                "close_tax": 0.001,
+                "open_commission": 0.0003,
+                "close_commission": 0.0003,
+                "min_commission": 5,
+                "buy_slippage": 0.001,
+                "sell_slippage": 0.001,
+            },
+            "data_scope": {
+                "premium_scope": "main_board_only",
+                "exclude_st": True,
+                "exclude_new_days": 30,
+                "exclude_bj": True,
+                "exclude_20cm_from_premium": True,
+                "topic_source": "eastmoney_industry_or_concept",
+            },
+            "notification": {
+                "webhook_enabled": True,
+                "server_sync_enabled": True,
+                "events": [
+                    "emotion_score",
+                    "trade",
+                    "stop_loss",
+                    "take_profit",
+                    "daily_summary",
+                ],
             },
         },
     },
@@ -199,7 +369,10 @@ RESEARCHERS = [
 DOCUMENTS = [
     {
         "title": "小市值轮动策略日报：三因子选股与调仓执行",
-        "summary": "SG/MS/PEG三因子融合选出10只小市值标的，今日调仓卖出2只买入3只，附止损与涨停管理。",
+        "summary": (
+            "SG/MS/PEG三因子融合选出10只小市值标的，"
+            "今日调仓卖出2只买入3只，附止损与涨停管理。"
+        ),
         "content": "一、今日选股池（SG池/MS池/PEG池/合并）...\n二、调仓明细...\n三、风控状态...",
         "doc_type": "report",
         "view_count": 876,
@@ -221,7 +394,10 @@ DOCUMENTS = [
 POSTS = [
     {
         "title": "小市值轮动策略实盘一个月，收益超15%！",
-        "content": "用小市值轮动研究员跑了一个月模拟盘，SG+MS+PEG三因子选股效果很好，每日调仓虽然频繁但胜率不错。分享下我的配置。",
+        "content": (
+            "用小市值轮动研究员跑了一个月模拟盘，SG+MS+PEG三因子选股效果很好，"
+            "每日调仓虽然频繁但胜率不错。分享下我的配置。"
+        ),
         "category": "strategy",
         "view_count": 1245,
         "comment_count": 47,
@@ -229,7 +405,10 @@ POSTS = [
     },
     {
         "title": "新手请教：SG因子和PEG因子的区别是什么？",
-        "content": "刚注册不久，看到小市值轮动策略里有SG、MS、PEG三个因子，但不太理解它们各自选的是什么类型的股票。有大佬能解释下吗？",
+        "content": (
+            "刚注册不久，看到小市值轮动策略里有SG、MS、PEG三个因子，"
+            "但不太理解它们各自选的是什么类型的股票。有大佬能解释下吗？"
+        ),
         "category": "question",
         "view_count": 234,
         "comment_count": 8,
@@ -276,12 +455,12 @@ async def seed(session: AsyncSession) -> None:
         await session.flush()
         print(f"✓ 创建用户: {user_id} ({DEMO_USER_NICKNAME})")
 
-    # ── 2. 创建研究员 + 雇佣关系 + 模拟交易账户（每个研究员 10 万初始资金）──
+    # ── 2. 创建研究员 + 雇佣关系 + 模拟交易账户（每个研究员 100 万初始资金）──
     from app.models.researcher import Researcher, ResearcherHire
     from app.models.trading import TradingAccount
 
     researcher_ids: list[str] = []
-    for i, cfg in enumerate(RESEARCHERS):
+    for cfg in RESEARCHERS:
         rid = _id("r_")
         researcher_ids.append(rid)
 
@@ -358,7 +537,7 @@ async def seed(session: AsyncSession) -> None:
     await session.flush()
 
     # ── 4. 创建社区帖子 + 评论 ──
-    from app.models.community import Post, Comment
+    from app.models.community import Comment, Post
 
     for j, post_cfg in enumerate(POSTS):
         post_id = _id("p_")

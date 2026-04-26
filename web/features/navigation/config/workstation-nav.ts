@@ -24,12 +24,12 @@ export interface NavItem {
 
 export const workstationNav: NavItem[] = [
   { key: 'ai-researcher', label: 'AI研究员', href: routes.aiResearcher, icon: RobotOutlined },
-  { key: 'community', label: '赛博社区', href: routes.community, icon: TeamOutlined },
+  { key: 'community', label: '极睿社区', href: routes.community, icon: TeamOutlined },
   { key: 'overview', label: '盘前速览', href: routes.preopen, icon: DashboardOutlined },
   { key: 'news-analysis', label: '资讯分析', href: routes.newsAnalysis, icon: FileSearchOutlined },
   {
     key: 'lab',
-    label: '赛博实验室',
+    label: '极睿实验室',
     icon: ExperimentOutlined,
     children: [
       { key: 'lab-knowledge', label: '我的知识库', href: routes.labKnowledgeBase, icon: BookOutlined },

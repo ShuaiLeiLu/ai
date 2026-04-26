@@ -44,6 +44,7 @@ import {
 import type { MenuProps } from 'antd';
 import type { PropsWithChildren } from 'react';
 
+import { Logo } from '@/components/ui/logo';
 import { workstationNav, type NavItem } from '@/features/navigation/config/workstation-nav';
 import { routes } from '@/lib/constants/routes';
 import { useAppShellStore } from '@/stores/app-shell.store';
@@ -176,11 +177,9 @@ export function WorkstationShell({ children }: PropsWithChildren) {
   const sidebarContent = (
     <div className="flex h-full flex-col">
       {/* Logo */}
-      <div className="flex items-center gap-2 px-5 py-4">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-500 text-sm font-bold text-white">
-          赛
-        </div>
-        <span className="text-base font-semibold text-slate-800">赛博投研</span>
+      <div className="flex items-center gap-3 px-6 py-5">
+        <Logo size={28} />
+        <span className="text-base font-bold tracking-tight text-slate-900">极睿智投</span>
       </div>
       {/* Nav */}
       <div className="flex-1 overflow-y-auto">
@@ -225,31 +224,29 @@ export function WorkstationShell({ children }: PropsWithChildren) {
         width={220}
         collapsedWidth={64}
         collapsed={collapsed}
-        className="!fixed !left-0 !top-0 !bottom-0 !z-20 !bg-white border-r border-slate-200 max-md:!hidden"
+        className="!fixed !left-0 !top-0 !bottom-0 !z-20 !bg-white border-r border-slate-100/60 max-md:!hidden shadow-[1px_0_10px_rgba(15,23,42,0.02)]"
         trigger={null}
       >
         <div className="flex h-full flex-col">
-          <div className="flex items-center gap-2 px-5 py-4">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-500 text-sm font-bold text-white">
-              赛
-            </div>
+          <div className="flex items-center gap-3 px-6 py-5 group cursor-pointer transition-colors">
+            <Logo size={28} />
             {!collapsed && (
-              <span className="text-base font-semibold text-slate-800">赛博投研</span>
+              <span className="text-base font-bold tracking-tight text-slate-900 group-hover:text-brand-600 transition-colors">极睿智投</span>
             )}
           </div>
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 overflow-y-auto px-2">
             <Menu
               mode="inline"
               selectedKeys={selectedKeys}
               defaultOpenKeys={defaultOpenKeys}
               items={buildMenuItems(workstationNav)}
-              className="!border-r-0"
+              className="!border-r-0 !bg-transparent custom-side-menu"
             />
           </div>
           {/* 折叠按钮 */}
           <button
             onClick={toggleCollapsed}
-            className="absolute -right-3 top-1/2 z-30 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-400 shadow-sm hover:text-brand-500 transition-colors"
+            className="absolute -right-3 top-24 z-30 flex h-6 w-6 items-center justify-center rounded-full border border-slate-100 bg-white text-slate-400 shadow-sm hover:text-brand-500 transition-all hover:scale-110 active:scale-95"
           >
             {collapsed ? <RightOutlined style={{ fontSize: 10 }} /> : <LeftOutlined style={{ fontSize: 10 }} />}
           </button>
@@ -269,21 +266,21 @@ export function WorkstationShell({ children }: PropsWithChildren) {
       </Drawer>
 
       {/* ── Main ── */}
-      <Layout className="transition-all duration-200 md:ml-[var(--sidebar-w)]" style={{ '--sidebar-w': collapsed ? '64px' : '220px' } as React.CSSProperties}>
+      <Layout className="transition-all duration-300 md:ml-[var(--sidebar-w)]" style={{ '--sidebar-w': collapsed ? '64px' : '220px' } as React.CSSProperties}>
         {/* 顶部导航 */}
-        <Header className="!sticky !top-0 !z-10 flex items-center justify-between border-b border-slate-200 !bg-white !px-3 sm:!px-6 !h-14 !leading-[56px]">
+        <Header className="!sticky !top-0 !z-10 flex items-center justify-between border-b border-slate-100/60 !bg-white/80 backdrop-blur-md !px-4 sm:!px-8 !h-16 !leading-[64px]">
           {/* 左侧：移动端汉堡菜单 */}
           <div className="flex flex-1 items-center gap-2">
             <Button
               type="text"
               icon={<MenuOutlined />}
               onClick={() => setDrawerOpen(true)}
-              className="md:!hidden !text-slate-600"
+              className="md:!hidden !text-slate-600 hover:!bg-slate-50"
             />
           </div>
 
           {/* 中间导航 —— 小屏隐藏，根据当前路由动态高亮 */}
-          <Space size={24} className="hidden sm:flex">
+          <Space size={32} className="hidden lg:flex">
             {[
               { label: '产品介绍', href: '/', match: (p: string) => p === '/' },
               { label: '工作台', href: '/workstation', match: (p: string) => p.startsWith('/workstation') && !p.startsWith(routes.userGuide) },
@@ -294,8 +291,10 @@ export function WorkstationShell({ children }: PropsWithChildren) {
                 <Link
                   key={item.href}
                   href={item.href as Route}
-                  className={`text-sm transition-colors ${
-                    active ? 'font-medium text-brand-500' : 'text-slate-600 hover:text-brand-500'
+                  className={`relative text-[14px] transition-all duration-200 ${
+                    active 
+                      ? 'font-semibold text-brand-600 after:absolute after:-bottom-[21px] after:left-0 after:h-[2px] after:w-full after:bg-brand-500' 
+                      : 'text-slate-500 hover:text-brand-500'
                   }`}
                 >
                   {item.label}
@@ -305,37 +304,45 @@ export function WorkstationShell({ children }: PropsWithChildren) {
           </Space>
 
           {/* 右侧工具区 */}
-          <div className="flex flex-1 items-center justify-end gap-2 sm:gap-3">
-            <Tooltip title="搜索">
-              <Button type="text" icon={<SearchOutlined />} className="!text-slate-500" size="small" />
-            </Tooltip>
-            <Tooltip title="通知">
-              <Badge dot>
-                <Button type="text" icon={<BellOutlined />} className="!text-slate-500" size="small" />
-              </Badge>
-            </Tooltip>
-            {/* VIP 徽章 —— 极小屏隐藏 */}
+          <div className="flex flex-1 items-center justify-end gap-3 sm:gap-5">
+            <div className="hidden sm:flex items-center gap-1 rounded-full bg-slate-50 px-2 py-1 border border-slate-100">
+              <SearchOutlined className="text-slate-400 text-xs ml-1" />
+              <span className="text-xs text-slate-400 mr-2 cursor-pointer">搜索功能...</span>
+            </div>
+            
+            <Badge dot offset={[-2, 4]} color="#7c3aed">
+              <Button type="text" icon={<BellOutlined />} className="!text-slate-500 hover:!bg-slate-50" />
+            </Badge>
+
+            {/* VIP 徽章 */}
             <Link href={routes.billing} className="hidden xs:block">
-              <div className="flex items-center gap-1 rounded-full bg-brand-50 px-2 py-0.5 sm:px-3 sm:py-1 cursor-pointer hover:bg-brand-100 transition-colors">
-                <CrownOutlined className="text-brand-500 text-xs" />
-                <span className="text-xs font-medium text-brand-600 hidden sm:inline">
+              <div className="flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1 border border-amber-100 cursor-pointer hover:bg-amber-100 transition-all">
+                <CrownOutlined className="text-amber-600 text-xs" />
+                <span className="text-xs font-semibold text-amber-700 hidden sm:inline">
                   {user ? user.membership_level : '开通VIP'}
                 </span>
               </div>
             </Link>
-            {/* 电池余额 —— 极小屏隐藏 */}
-            <div className="hidden sm:flex items-center gap-1 text-sm text-slate-500">
-              <ThunderboltOutlined className="text-amber-500" />
-              <span>{user?.battery_balance ?? 0}</span>
-            </div>
+
+            <div className="h-4 w-[1px] bg-slate-100 hidden sm:block mx-1" />
+
             <Dropdown menu={{ items: avatarMenuItems }} trigger={['click']} placement="bottomRight">
-              <Avatar size={30} icon={<UserOutlined />} className="cursor-pointer bg-brand-400 shrink-0" />
+              <div className="flex items-center gap-2 cursor-pointer group">
+                <Avatar size={32} icon={<UserOutlined />} className="bg-brand-500 shadow-md shadow-brand-500/10 group-hover:scale-105 transition-transform" />
+                <div className="hidden xl:flex flex-col leading-tight">
+                  <span className="text-xs font-semibold text-slate-700 line-clamp-1">{user?.nickname || '未登录'}</span>
+                  <span className="text-[10px] text-slate-400 flex items-center gap-0.5">
+                    <ThunderboltOutlined className="text-amber-500 scale-75" />
+                    {user?.battery_balance ?? 0}
+                  </span>
+                </div>
+              </div>
             </Dropdown>
           </div>
         </Header>
 
         {/* 页面内容 */}
-        <Content className="p-3 sm:p-5 bg-[#f5f7fb] min-h-[calc(100vh-56px)]">{children}</Content>
+        <Content className="p-4 sm:p-8 bg-[#f8f9fa] min-h-[calc(100vh-64px)]">{children}</Content>
       </Layout>
     </Layout>
   );

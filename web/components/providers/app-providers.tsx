@@ -27,15 +27,50 @@ export function AppProviders({ children }: PropsWithChildren) {
           algorithm: theme.defaultAlgorithm,
           token: {
             colorPrimary: '#7c3aed',
-            borderRadius: 8,
-            colorBgLayout: '#f5f7fb',
+            colorInfo: '#7c3aed',
+            borderRadius: 6,
+            colorBgLayout: '#f8f9fa',
+            colorTextBase: '#1e293b',
+            colorLink: '#7c3aed',
+            fontFamily: "'Inter', -apple-system, sans-serif",
           },
           components: {
-            Menu: {
-              itemSelectedBg: '#f3f0ff',
-              itemSelectedColor: '#7c3aed',
-              subMenuItemBg: 'transparent',
+            Layout: {
+              bodyBg: '#f8f9fa',
+              headerBg: '#ffffff',
+              siderBg: '#ffffff',
             },
+            Menu: {
+              itemSelectedBg: '#f5f3ff',
+              itemSelectedColor: '#7c3aed',
+              itemHoverBg: '#f8fafc',
+              itemActiveBg: '#f5f3ff',
+              subMenuItemBg: 'transparent',
+              itemMarginInline: 8,
+              itemBorderRadius: 4,
+            },
+            Button: {
+              controlHeight: 36,
+              paddingInline: 16,
+              fontWeight: 500,
+              defaultBorderColor: '#e2e8f0',
+              defaultShadow: 'none',
+              primaryShadow: '0 2px 4px rgba(124, 58, 237, 0.1)',
+            },
+            Card: {
+              headerFontSize: 15,
+              paddingLG: 20,
+              colorBorderSecondary: 'rgba(15, 23, 42, 0.04)',
+            },
+            Input: {
+              activeBorderColor: '#7c3aed',
+              hoverBorderColor: '#a78bfa',
+              paddingInline: 12,
+              controlHeight: 36,
+            },
+            Badge: {
+              dotSize: 6,
+            }
           },
         }}
       >

@@ -5,8 +5,12 @@ import { AppProviders } from '@/components/providers/app-providers';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: '赛博投研',
-  description: 'AI 原生投研工作台基础架构'
+  title: '极睿智投',
+  description: 'AI 原生投研工作台基础架构',
+  icons: {
+    icon: '/logo.svg',
+    apple: '/logo.svg',
+  }
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

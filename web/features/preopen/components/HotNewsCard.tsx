@@ -29,35 +29,41 @@ export function HotNewsCard() {
   return (
     <StateWrapper data={data} isLoading={isLoading} error={error} title="A股热讯">
       <PageCard title="A股热讯" extra={extra}>
-        <div className="divide-y divide-slate-50">
+        <div className="flex flex-col gap-0.5">
           {(data ?? []).slice(0, 10).map((item: HotNewsItem, index: number) => (
             <div
               key={item.news_id}
-              className="flex items-center gap-2 px-0 py-[7px] transition-colors hover:bg-slate-50"
+              className="group relative flex items-center gap-3 rounded-md px-2 py-[9px] transition-all hover:bg-slate-50"
             >
-              {/* 序号：前3橙红色加粗，其余灰色 */}
+              {/* Hover 时的左侧指示线 */}
+              <div className="absolute left-0 top-1/2 h-0 w-[2px] -translate-y-1/2 bg-brand-500 transition-all group-hover:h-3/5" />
+
+              {/* 序号 */}
               <span
-                className={`w-5 shrink-0 text-center text-sm font-bold ${
+                className={`w-6 shrink-0 text-center text-[13px] font-semibold tabular-nums ${
                   index < 3 ? 'text-rose-500' : 'text-slate-400'
                 }`}
               >
-                {index + 1}
+                {String(index + 1).padStart(2, '0')}
               </span>
 
-              {/* 标题 —— 紧凑单行截断 */}
+              {/* 标题 */}
               <a
                 href={item.jump_target}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="min-w-0 flex-1 truncate text-[13px] leading-5 text-slate-700 hover:text-brand-500"
+                className="min-w-0 flex-1 truncate text-[13px] leading-5 text-slate-700 transition-colors group-hover:text-brand-600"
               >
                 {item.title}
               </a>
 
-              {/* 热度数字 —— 右对齐 */}
-              <span className="shrink-0 text-xs tabular-nums text-slate-400">
-                {item.heat}
-              </span>
+              {/* 热度数字 */}
+              <div className="flex shrink-0 items-center gap-1">
+                <div className="h-1 w-1 rounded-full bg-rose-400 animate-pulse" />
+                <span className="text-[11px] font-medium tabular-nums text-slate-400">
+                  {item.heat}
+                </span>
+              </div>
             </div>
           ))}
         </div>

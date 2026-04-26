@@ -11,7 +11,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime as dt, timedelta, time
+from datetime import datetime as dt
+from datetime import time, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -54,6 +55,23 @@ async def _run_daily_rotation(db: DatabaseFactory) -> None:
         logger.info("[调度器] 调仓完成: %s", result)
     except Exception:
         logger.exception("[调度器] 调仓执行异常")
+
+
+async def _run_intraday_confirmation(db: DatabaseFactory) -> None:
+    """执行盘中承接确认（仅在交易时段内执行）。"""
+    from app.engine.strategy_engine import execute_intraday_confirmation
+
+    if not _is_trading_hours():
+        logger.info("[调度器] 当前非交易时段，跳过盘中确认")
+        return
+
+    logger.info("[调度器] 开始执行盘中承接确认...")
+    try:
+        async with db.session_factory() as session:
+            result = await execute_intraday_confirmation(session)
+        logger.info("[调度器] 盘中确认完成: %s", result)
+    except Exception:
+        logger.exception("[调度器] 盘中确认执行异常")
 
 
 async def _run_limit_up_check(db: DatabaseFactory) -> None:
@@ -144,6 +162,16 @@ def start_scheduler(db: DatabaseFactory, redis: RedisFactory | None = None) -> A
         args=[db],
         id="daily_rotation",
         name="每日轮动调仓",
+        replace_existing=True,
+    )
+
+    # 每个交易日 09:35 追加一次盘中确认，供情绪超短等需要开盘承接验证的策略使用。
+    _scheduler.add_job(
+        _run_intraday_confirmation,
+        trigger=CronTrigger(hour=9, minute=35, day_of_week="mon-fri"),
+        args=[db],
+        id="intraday_confirmation",
+        name="盘中承接确认",
         replace_existing=True,
     )
 

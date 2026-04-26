@@ -3,7 +3,7 @@
  *
  * 布局（参照目标站截图）：
  *  - 顶部：返回链接 + 页面标题
- *  - 左上：账户总览（总资产、今日盈亏、收益率、持仓市值、可用资金）
+ *  - 左上：账户总览（总资产、今日盈亏、今日收益率、持仓市值、可用资金）
  *  - 左侧：持仓列表侧边栏（当前持仓 / 历史记录 切换）
  *  - 右侧主区域：两个 Tab（交易日志 / 历史交易）
  *    - 交易日志：按日期分组的成交记录表格 + 操作总结文本
@@ -682,8 +682,10 @@ export function TradingDetailClient({ researcherId }: { researcherId: string }) 
   /** 初始资金（以后端返回为准，缺失时兜底 100 万） */
   const INITIAL = acct?.initial_capital ?? stats?.initial_capital ?? 1_000_000;
 
-  /** 总收益率 */
-  const totalReturnPct = acct ? (acct.total_asset - INITIAL) / INITIAL : 0;
+  /** 今日收益率：今日盈亏 / 今日起始权益 */
+  const todayPnl = acct?.daily_pnl ?? 0;
+  const todayStartAsset = acct ? acct.total_asset - todayPnl : INITIAL;
+  const todayReturnPct = todayStartAsset > 0 ? todayPnl / todayStartAsset : 0;
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -712,11 +714,11 @@ export function TradingDetailClient({ researcherId }: { researcherId: string }) 
               <div className="text-2xl font-bold text-slate-800">{fmtWan(acct?.total_asset ?? 0)}</div>
               <div className="flex items-center gap-2 mt-1 text-xs">
                 <span className="text-slate-400">今日盈亏</span>
-                <span className={`font-medium ${pnlColor(acct?.daily_pnl ?? 0)}`}>
-                  {(acct?.daily_pnl ?? 0) > 0 ? '+' : ''}{fmtMoney(acct?.daily_pnl ?? 0)}
+                <span className={`font-medium ${pnlColor(todayPnl)}`}>
+                  {todayPnl > 0 ? '+' : ''}{fmtMoney(todayPnl)}
                 </span>
-                <span className={`${pnlColor(totalReturnPct)}`}>
-                  收益率 {fmtPct(totalReturnPct)}
+                <span className={`${pnlColor(todayReturnPct)}`}>
+                  今日收益率 {fmtPct(todayReturnPct)}
                 </span>
               </div>
               <div className="flex gap-3 mt-3">

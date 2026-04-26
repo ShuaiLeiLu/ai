@@ -69,7 +69,7 @@ export function TradingPageClient() {
               <Col xs={24} md={6}>
                 <Card size="small">
                   <Statistic
-                    title="当日盈亏"
+                    title="近日盈亏"
                     value={accountQuery.data.daily_pnl}
                     precision={2}
                     suffix="元"
@@ -92,4 +92,3 @@ export function TradingPageClient() {
     </div>
   );
 }
-

@@ -140,6 +140,47 @@ class TradingService:
         """统一返回模拟盘初始资金口径。"""
         return DEFAULT_INITIAL_CAPITAL
 
+    @staticmethod
+    def _derive_recent_pnl(
+        *,
+        total_asset: float,
+        initial_capital: float,
+        replay: _ReplaySnapshot | None,
+    ) -> float:
+        """用资金曲线推导近日盈亏，避免直接暴露策略运行过程中的临时 daily_pnl。"""
+        if replay and replay.daily_equity:
+            today_str = datetime.now().date().strftime("%Y-%m-%d")
+            previous_dates = [date for date in replay.daily_equity if date < today_str]
+            if previous_dates:
+                base_equity = float(replay.daily_equity[max(previous_dates)])
+                return round(total_asset - base_equity, 2)
+            return round(total_asset - initial_capital, 2)
+        return round(total_asset - initial_capital, 2)
+
+    def _account_to_schema(
+        self,
+        acc: AccountModel | object,
+        *,
+        replay: _ReplaySnapshot | None = None,
+    ) -> TradingAccount:
+        initial_capital = self._infer_initial_capital(acc)
+        total_asset = round(float(getattr(acc, "total_asset", initial_capital)), 2)
+        total_pnl = round(total_asset - initial_capital, 2)
+        return TradingAccount(
+            account_id=str(getattr(acc, "id")),
+            initial_capital=initial_capital,
+            total_asset=total_asset,
+            available_cash=round(float(getattr(acc, "available_cash", 0.0)), 2),
+            holding_value=round(float(getattr(acc, "holding_value", 0.0)), 2),
+            daily_pnl=self._derive_recent_pnl(
+                total_asset=total_asset,
+                initial_capital=initial_capital,
+                replay=replay,
+            ),
+            total_pnl=total_pnl,
+            total_return=round(total_pnl / initial_capital, 4) if initial_capital > 0 else 0.0,
+        )
+
     async def _resolve_account_model(
         self,
         session: AsyncSession,
@@ -253,7 +294,7 @@ class TradingService:
     ) -> list[RecordModel]:
         """按时间范围查询成交记录。
 
-        账户概况的“今日盈亏”只关心当日成交，不应该每次都全量回放历史记录。
+        原始账户日内快照只关心当日成交，不应该每次都全量回放历史记录。
         这里先查当天窗口，只有确实存在卖出单时，才退化到全量回放计算真实已实现盈亏。
         """
         stmt = (
@@ -491,15 +532,9 @@ class TradingService:
             return cached
 
         acc = await self._resolve_account_model(session, user_id, researcher_id)
+        _, replay = await self._load_replay(session, acc.id)
 
-        data = TradingAccount(
-            account_id=acc.id,
-            initial_capital=self._infer_initial_capital(acc),
-            total_asset=float(acc.total_asset),
-            available_cash=float(acc.available_cash),
-            holding_value=float(acc.holding_value),
-            daily_pnl=float(acc.daily_pnl),
-        )
+        data = self._account_to_schema(acc, replay=replay)
         self._cache_set(cache_key, data, ACCOUNT_CACHE_TTL_SECONDS)
         return data
 
@@ -653,14 +688,7 @@ class TradingService:
         # 2. 加载 & 回放成交记录（只做一次）
         replay_data = await self._load_replay(session, account_id)
 
-        account_data = TradingAccount(
-            account_id=acc.id,
-            initial_capital=self._infer_initial_capital(acc),
-            total_asset=float(acc.total_asset),
-            available_cash=float(acc.available_cash),
-            holding_value=float(acc.holding_value),
-            daily_pnl=float(acc.daily_pnl),
-        )
+        account_data = self._account_to_schema(acc, replay=replay_data[1])
 
         # 4. 成交记录（复用 replay）
         record_items = await self.async_list_records(
@@ -690,14 +718,8 @@ class TradingService:
         account_id = acc.id
 
         position_items = await self.async_list_positions(session, account_id, cache_only=True)
-        account_data = TradingAccount(
-            account_id=acc.id,
-            initial_capital=self._infer_initial_capital(acc),
-            total_asset=float(acc.total_asset),
-            available_cash=float(acc.available_cash),
-            holding_value=float(acc.holding_value),
-            daily_pnl=float(acc.daily_pnl),
-        )
+        _, replay = await self._load_replay(session, account_id)
+        account_data = self._account_to_schema(acc, replay=replay)
         return TradingPortfolioData(account=account_data, positions=position_items)
 
     async def async_get_stats(
@@ -845,12 +867,12 @@ class TradingService:
         买入：
         - 检查可用资金 >= 成交金额 + 手续费
         - 更新持仓成本
-        - 账户当日盈亏扣除买入手续费
+        - 原始账户日内盈亏扣除买入手续费
 
         卖出：
         - 检查持仓数量
         - 释放净资金（卖出金额 - 手续费 - 印花税）
-        - 账户当日盈亏计入已实现盈亏
+        - 原始账户日内盈亏计入已实现盈亏
         """
         acct_repo = TradingAccountRepository(session)
         pos_repo = PositionRepository(session)

@@ -28,7 +28,9 @@ class TradingAccount(SchemaModel):
     total_asset: float       # 总资产
     available_cash: float    # 可用资金
     holding_value: float     # 持仓市值
-    daily_pnl: float         # 今日盈亏
+    daily_pnl: float         # 近日盈亏：当前权益 - 上一个资金曲线节点
+    total_pnl: float = 0.0   # 累计盈亏：当前权益 - 初始资金
+    total_return: float = 0.0  # 累计收益率
 
 
 class PositionItem(SchemaModel):

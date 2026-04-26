@@ -136,5 +136,6 @@ def test_sell_order_updates_cash_and_marks_position_for_removal() -> None:
     assert result.status == ORDER_STATUS_FILLED
     assert result.fill_price == 10.20
     assert result.remove_position is True
+    assert position.quantity == 0
     assert result.realized_pnl == 13.98
     assert account.available_cash == 101_013.98

@@ -24,7 +24,9 @@ const config: Config = {
         }
       },
       boxShadow: {
-        panel: '0 12px 36px rgba(15, 23, 42, 0.08)'
+        panel: '0 12px 36px rgba(15, 23, 42, 0.08)',
+        fintech: '0 4px 24px -4px rgba(15, 23, 42, 0.04)',
+        'fintech-sm': '0 2px 8px -2px rgba(15, 23, 42, 0.04)'
       }
     }
   },

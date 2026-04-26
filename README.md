@@ -1,6 +1,6 @@
-# Cyber Invest Foundation
+# 极睿智投 (X-Insight)
 
-赛博投研项目基础工程骨架，采用：
+极睿智投项目基础工程骨架，采用：
 
 - 前端：Next.js + React + TypeScript + Ant Design + Tailwind CSS
 - 后端：FastAPI + SQLAlchemy + PostgreSQL + Redis + Celery

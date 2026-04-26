@@ -7,6 +7,8 @@ export interface TradingAccount {
   available_cash: number;
   holding_value: number;
   daily_pnl: number;
+  total_pnl: number;
+  total_return: number;
 }
 
 export interface PositionItem {

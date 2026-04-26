@@ -1,5 +1,5 @@
 /**
- * 赛博社区页面 —— 帖子列表 + 分类Tab + 搜索 + 发布
+ * 极睿社区页面 —— 帖子列表 + 分类Tab + 搜索 + 发布
  *
  * 布局参考目标站：左侧帖子内容（作者头像 + 徽章 + 标题 + 摘要），
  * 右侧互动指标（浏览/评论/点赞），顶部 Segmented 切换 全部/物价/热门。
@@ -106,7 +106,7 @@ function PostCard({ item, onDetail }: { item: CommunityPost; onDetail: (id: stri
 }
 
 /**
- * 赛博社区主组件
+ * 极睿社区主组件
  * 功能：Tab 分类筛选 + 关键词搜索 + 帖子列表 + 详情抽屉 + 发帖弹窗
  */
 export function CommunityPageClient() {

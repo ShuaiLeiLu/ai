@@ -17,6 +17,7 @@ import { LockOutlined, PhoneOutlined, UserOutlined } from '@ant-design/icons';
 
 import { login as loginApi, register as registerApi } from '@/features/auth/api';
 import { useUserSessionStore } from '@/stores/user-session.store';
+import { Logo } from '@/components/ui/logo';
 import { routes } from '@/lib/constants/routes';
 
 type AuthMode = 'login' | 'register';
@@ -107,11 +108,11 @@ export default function LoginPage() {
       <div className="w-full max-w-[420px] rounded-2xl border border-slate-200 bg-white p-6 shadow-xl sm:p-8">
         {/* Logo + 标题 */}
         <div className="mb-6 text-center">
-          <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-xl bg-brand-500 text-lg font-bold text-white">
-            赛
+          <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center">
+            <Logo size={56} />
           </div>
           <Typography.Title level={3} className="!mb-1">
-            赛博投研
+            极睿智投
           </Typography.Title>
           <Typography.Text type="secondary" className="text-sm">
             AI 驱动的下一代投研平台

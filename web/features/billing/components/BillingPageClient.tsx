@@ -389,7 +389,7 @@ function InviteTab() {
           <GiftOutlined /> 邀请好友赢电池
         </div>
         <div className="mb-4 text-sm text-white/80">
-          邀请好友注册赛博投研，双方各得 100 电池；好友开通 VIP 后额外奖励 500 电池！
+          邀请好友注册极睿智投，双方各得 100 电池；好友开通 VIP 后额外奖励 500 电池！
         </div>
         <div className="flex flex-col gap-2 sm:flex-row">
           <Input

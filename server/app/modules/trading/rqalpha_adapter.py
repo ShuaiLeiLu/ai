@@ -76,7 +76,12 @@ def _price_limits(symbol: str, name: str, prev_close: float | None) -> tuple[flo
     return round(prev_close * (1 + ratio), 2), round(prev_close * (1 - ratio), 2)
 
 
-def _validate_lot_size(side: str, quantity: int, position_quantity: int, sellable_quantity: int | None) -> str | None:
+def _validate_lot_size(
+    side: str,
+    quantity: int,
+    position_quantity: int,
+    sellable_quantity: int | None,
+) -> str | None:
     if quantity <= 0:
         return "委托数量必须大于 0"
 
@@ -121,12 +126,20 @@ def _resolve_limit_fill(
         limit_up, limit_down = limits
         if side == "buy":
             if limit_price > limit_up:
-                return ORDER_STATUS_REJECTED, None, f"委托价 {limit_price:.2f} 高于涨停价 {limit_up:.2f}"
+                return (
+                    ORDER_STATUS_REJECTED,
+                    None,
+                    f"委托价 {limit_price:.2f} 高于涨停价 {limit_up:.2f}",
+                )
             if market_price >= limit_up and limit_price >= limit_up:
                 return ORDER_STATUS_REJECTED, None, f"{symbol} 当前处于涨停状态，无法按限价买入"
         else:
             if limit_price < limit_down:
-                return ORDER_STATUS_REJECTED, None, f"委托价 {limit_price:.2f} 低于跌停价 {limit_down:.2f}"
+                return (
+                    ORDER_STATUS_REJECTED,
+                    None,
+                    f"委托价 {limit_price:.2f} 低于跌停价 {limit_down:.2f}",
+                )
             if market_price <= limit_down and limit_price <= limit_down:
                 return ORDER_STATUS_REJECTED, None, f"{symbol} 当前处于跌停状态，无法按限价卖出"
 
@@ -245,7 +258,10 @@ def execute_stock_order(
 
     commission = round(max(amount * close_commission_rate, min_commission), 2)
     tax = round(amount * close_tax_rate, 2)
-    realized_pnl = round(amount - commission - tax - float(existing_position.cost_price) * quantity, 2)
+    realized_pnl = round(
+        amount - commission - tax - float(existing_position.cost_price) * quantity,
+        2,
+    )
 
     account.available_cash = round(float(account.available_cash) + amount - commission - tax, 2)
     account.holding_value = round(float(account.holding_value) - amount, 2)
@@ -254,6 +270,9 @@ def execute_stock_order(
     remaining_quantity = int(existing_position.quantity) - quantity
     if remaining_quantity <= 0:
         remove_position = True
+        existing_position.quantity = 0
+        existing_position.current_price = current_price
+        existing_position.pnl = 0.0
     else:
         remove_position = False
         existing_position.quantity = remaining_quantity

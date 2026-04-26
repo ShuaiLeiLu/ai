@@ -32,11 +32,21 @@ async def test_async_get_portfolio_uses_account_snapshot(monkeypatch: pytest.Mon
     async def fake_list_positions(*_args: object, **_kwargs: object) -> list[object]:
         return []
 
+    async def fake_load_replay(*_args: object, **_kwargs: object) -> tuple[list[object], object]:
+        replay = SimpleNamespace(
+            daily_equity={"2000-01-01": 999500.0},
+            sell_pnls=[],
+            hold_days=[],
+            record_map={},
+        )
+        return [], replay
+
     async def fail_refresh(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("detail read path must not trigger quote refresh")
 
     monkeypatch.setattr(service, "_resolve_account_model", fake_resolve_account_model)
     monkeypatch.setattr(service, "async_list_positions", fake_list_positions)
+    monkeypatch.setattr(service, "_load_replay", fake_load_replay)
     monkeypatch.setattr(service, "_refresh_account_snapshot", fail_refresh)
 
     data = await service.async_get_portfolio(SimpleNamespace(), "u_demo", "r_demo")
@@ -45,8 +55,45 @@ async def test_async_get_portfolio_uses_account_snapshot(monkeypatch: pytest.Mon
     assert data.account.total_asset == 998000.0
     assert data.account.available_cash == 120000.0
     assert data.account.holding_value == 878000.0
-    assert data.account.daily_pnl == 3200.0
+    assert data.account.daily_pnl == -1500.0
+    assert data.account.total_pnl == -2000.0
+    assert data.account.total_return == -0.002
     assert data.positions == []
+
+
+@pytest.mark.asyncio
+async def test_async_get_account_ignores_stale_raw_daily_pnl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = TradingService()
+    account = SimpleNamespace(
+        id="acct_recent_pnl_test",
+        total_asset=985031.32,
+        available_cash=10000.0,
+        holding_value=975031.32,
+        daily_pnl=1750.0,
+    )
+
+    async def fake_resolve_account_model(*_args: object, **_kwargs: object) -> object:
+        return account
+
+    async def fake_load_replay(*_args: object, **_kwargs: object) -> tuple[list[object], object]:
+        replay = SimpleNamespace(
+            daily_equity={"2000-01-01": 998894.32},
+            sell_pnls=[],
+            hold_days=[],
+            record_map={},
+        )
+        return [], replay
+
+    monkeypatch.setattr(service, "_resolve_account_model", fake_resolve_account_model)
+    monkeypatch.setattr(service, "_load_replay", fake_load_replay)
+
+    data = await service.async_get_account(SimpleNamespace(), "u_recent", "r_recent")
+
+    assert data.daily_pnl == -13863.0
+    assert data.total_pnl == -14968.68
+    assert data.total_return == -0.015
 
 
 @pytest.mark.asyncio
