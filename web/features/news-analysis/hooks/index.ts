@@ -6,7 +6,7 @@ import { GetNewsFeedParams } from '@/types/news-analysis';
 const FEATURE_KEY = 'news-analysis';
 
 /**
- * 聚合查询 —— 一次请求获取资讯分析全量数据。
+ * 聚合查询 —— 一次请求获取资讯分析数据（不含 AI 面板）。
  * 各子 hook 从聚合数据中提取所需字段，共享同一份缓存。
  */
 function useNewsAnalysisAll() {
@@ -23,9 +23,18 @@ export const useNewsFeed = (_params?: GetNewsFeedParams) => {
   return { ...query, data: query.data?.feed };
 };
 
-export const useAIPanels = () => {
-  const query = useNewsAnalysisAll();
-  return { ...query, data: query.data?.ai_panels };
+/**
+ * AI 智能分析面板 —— 独立查询，用户点击后才触发。
+ * enabled 默认 false，由组件手动控制。
+ */
+export const useAIPanels = (enabled = false) => {
+  return useQuery({
+    queryKey: [FEATURE_KEY, 'ai-panels'],
+    queryFn: api.getAIPanels,
+    enabled,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  });
 };
 
 export const useHotStocks = () => {

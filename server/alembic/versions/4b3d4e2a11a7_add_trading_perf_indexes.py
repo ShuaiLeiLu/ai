@@ -30,14 +30,9 @@ def upgrade() -> None:
         "CREATE INDEX IF NOT EXISTS ix_trade_records_account_created_at "
         "ON trade_records (account_id, created_at)"
     )
-    op.execute(
-        "CREATE INDEX IF NOT EXISTS ix_trade_logs_account_created_at "
-        "ON trade_logs (account_id, created_at)"
-    )
 
 
 def downgrade() -> None:
-    op.execute("DROP INDEX IF EXISTS ix_trade_logs_account_created_at")
     op.execute("DROP INDEX IF EXISTS ix_trade_records_account_created_at")
     op.execute("DROP INDEX IF EXISTS ix_positions_account_symbol")
     op.execute("DROP INDEX IF EXISTS ix_trading_accounts_user_researcher")

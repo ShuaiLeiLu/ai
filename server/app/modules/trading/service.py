@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import time
-from collections import defaultdict, deque
+import asyncio
+from collections import Counter, defaultdict, deque
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from uuid import uuid4
 
 from fastapi import HTTPException, status
@@ -23,13 +25,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.container import get_container
 from app.integrations.akshare.client import (
+    IndustryBoard,
+    LimitDownStock,
+    LimitUpStock,
     StockQuote,
+    get_industry_boards,
+    get_limit_down_pool,
+    get_limit_up_pool,
+    get_stock_history_batch,
     get_stock_quote_by_symbols,
     peek_stock_quote_by_symbols,
     run_sync,
 )
 from app.models.researcher import Researcher as ResearcherModel
 from app.models.trading import Position as PositionModel
+from app.models.trading import TradingAccountSnapshot as SnapshotModel
 from app.models.trading import TradeLog as TradeLogModel
 from app.models.trading import TradeRecord as RecordModel
 from app.models.trading import TradingAccount as AccountModel
@@ -51,6 +61,7 @@ from app.modules.trading.schemas import (
     PositionItem,
     RiskMetrics,
     TradeLogItem,
+    TradeLogSection,
     TradeRecord,
     TradingAccount,
     TradingAllData,
@@ -92,6 +103,15 @@ class _ReplaySnapshot:
     daily_equity: dict[str, float]
     sell_pnls: list[float]
     hold_days: list[float]
+
+
+@dataclass
+class _DailyAccountSnapshot:
+    trade_date: date
+    total_asset: float
+    available_cash: float
+    holding_value: float
+    daily_pnl: float
 
 
 class TradingService:
@@ -247,6 +267,119 @@ class TradingService:
 
         return round(holding_value, 2), round(floating_daily_pnl, 2)
 
+    @staticmethod
+    def _quote_snapshot_payload(quote: StockQuote | None) -> dict[str, object] | None:
+        if quote is None:
+            return None
+        return {
+            "symbol": quote.symbol,
+            "name": quote.name,
+            "price": float(quote.price),
+            "change": float(quote.change),
+            "change_pct": float(quote.change_pct),
+            "open": float(quote.open),
+            "high": float(quote.high),
+            "low": float(quote.low),
+            "prev_close": float(quote.prev_close),
+            "volume": float(quote.volume),
+            "amount": float(quote.amount),
+            "turnover_ratio": float(getattr(quote, "turnover_ratio", 0.0) or 0.0),
+            "volume_ratio": float(getattr(quote, "volume_ratio", 0.0) or 0.0),
+            "industry": str(getattr(quote, "industry", "") or ""),
+            "main_net_inflow": float(getattr(quote, "main_net_inflow", 0.0) or 0.0),
+            "main_net_inflow_pct": float(getattr(quote, "main_net_inflow_pct", 0.0) or 0.0),
+            "timestamp": quote.timestamp,
+        }
+
+    @staticmethod
+    def _industry_snapshot_payload(board: IndustryBoard | None) -> dict[str, object] | None:
+        if board is None:
+            return None
+        return {
+            "name": board.name,
+            "change_pct": float(board.change_pct),
+            "total_volume": float(board.total_volume),
+            "total_amount": float(board.total_amount),
+            "net_inflow": float(board.net_inflow),
+            "rise_count": int(board.rise_count),
+            "fall_count": int(board.fall_count),
+            "leading_stock": board.leading_stock,
+            "leading_stock_pct": float(board.leading_stock_pct),
+        }
+
+    @staticmethod
+    def _limit_stock_payload(item: LimitUpStock | LimitDownStock | None) -> dict[str, object] | None:
+        if item is None:
+            return None
+        payload: dict[str, object] = {
+            "symbol": item.symbol,
+            "name": item.name,
+            "change_pct": float(item.change_pct),
+            "price": float(item.price),
+            "amount": float(item.amount),
+            "turnover_ratio": float(item.turnover_ratio),
+        }
+        if isinstance(item, LimitUpStock):
+            payload.update(
+                {
+                    "seal_amount": float(item.seal_amount),
+                    "first_seal_time": item.first_seal_time,
+                    "last_seal_time": item.last_seal_time,
+                    "break_count": int(item.break_count),
+                    "consecutive": int(item.consecutive),
+                    "industry": item.industry,
+                }
+            )
+        return payload
+
+    async def _build_trade_market_snapshot(
+        self,
+        symbol: str,
+        quote: StockQuote | None = None,
+    ) -> dict[str, object]:
+        """为成交复盘收集真实行情、板块和情绪快照。"""
+        snapshot_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        quote_payload = self._quote_snapshot_payload(quote)
+        industry_name = str((quote_payload or {}).get("industry") or "")
+
+        try:
+            boards, limit_up_pool, limit_down_pool = await asyncio.gather(
+                run_sync(get_industry_boards),
+                run_sync(get_limit_up_pool),
+                run_sync(get_limit_down_pool),
+            )
+        except Exception as exc:
+            logger.warning("交易复盘行情快照获取失败: %s", exc)
+            boards = []
+            limit_up_pool = []
+            limit_down_pool = []
+
+        industry = next((item for item in boards if item.name == industry_name), None) if industry_name else None
+        limit_up_item = next((item for item in limit_up_pool if item.symbol == symbol), None)
+        limit_down_item = next((item for item in limit_down_pool if item.symbol == symbol), None)
+        if industry is None and isinstance(limit_up_item, LimitUpStock) and limit_up_item.industry:
+            industry = next((item for item in boards if item.name == limit_up_item.industry), None)
+        industry_counter: Counter[str] = Counter(item.industry for item in limit_up_pool if item.industry)
+
+        return {
+            "snapshot_at": snapshot_time,
+            "quote": quote_payload,
+            "industry": self._industry_snapshot_payload(industry),
+            "limit_up": self._limit_stock_payload(limit_up_item),
+            "limit_down": self._limit_stock_payload(limit_down_item),
+            "market_sentiment": {
+                "snapshot_at": snapshot_time,
+                "limit_up_count": len(limit_up_pool),
+                "limit_down_count": len(limit_down_pool),
+                "multi_board_count": sum(1 for item in limit_up_pool if item.consecutive >= 2),
+                "highest_consecutive": max((item.consecutive for item in limit_up_pool), default=0),
+                "top_limit_industries": [
+                    {"industry": name, "limit_up_count": count}
+                    for name, count in industry_counter.most_common(5)
+                ],
+            },
+        }
+
     async def _load_realtime_quotes(
         self,
         symbols: list[str],
@@ -283,6 +416,50 @@ class TradingService:
         )
         result = await session.execute(stmt)
         return list(result.scalars().all())
+
+    async def _load_account_snapshots(
+        self,
+        session: AsyncSession,
+        account_id: str,
+    ) -> list[SnapshotModel]:
+        stmt = (
+            select(SnapshotModel)
+            .where(SnapshotModel.account_id == account_id)
+            .order_by(SnapshotModel.trade_date.asc())
+        )
+        result = await session.execute(stmt)
+        return list(result.scalars().all())
+
+    async def _upsert_account_snapshots(
+        self,
+        session: AsyncSession,
+        account_id: str,
+        snapshots: list[_DailyAccountSnapshot],
+    ) -> None:
+        if not snapshots:
+            return
+
+        existing_rows = await self._load_account_snapshots(session, account_id)
+        existing_by_date = {row.trade_date: row for row in existing_rows}
+        for snapshot in snapshots:
+            existing = existing_by_date.get(snapshot.trade_date)
+            if existing is None:
+                session.add(
+                    SnapshotModel(
+                        id=f"tas_{uuid4().hex[:8]}",
+                        account_id=account_id,
+                        trade_date=snapshot.trade_date,
+                        total_asset=snapshot.total_asset,
+                        available_cash=snapshot.available_cash,
+                        holding_value=snapshot.holding_value,
+                        daily_pnl=snapshot.daily_pnl,
+                    )
+                )
+            else:
+                existing.total_asset = snapshot.total_asset
+                existing.available_cash = snapshot.available_cash
+                existing.holding_value = snapshot.holding_value
+                existing.daily_pnl = snapshot.daily_pnl
 
     async def _load_account_records_in_range(
         self,
@@ -337,6 +514,14 @@ class TradingService:
         stmt = select(ResearcherModel).where(ResearcherModel.id == researcher_id)
         result = await session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def async_resolve_account_model(
+        self,
+        session: AsyncSession,
+        user_id: str,
+        researcher_id: str,
+    ) -> AccountModel:
+        return await self._resolve_account_model(session, user_id, researcher_id)
 
     async def _append_trade_reflection_log(
         self,
@@ -474,6 +659,125 @@ class TradingService:
             sell_pnls=sell_pnls,
             hold_days=hold_days,
         )
+
+    async def _build_snapshots_from_market_history(
+        self,
+        records: list[RecordModel],
+        *,
+        initial_capital: float = DEFAULT_INITIAL_CAPITAL,
+    ) -> list[_DailyAccountSnapshot]:
+        """按历史日 K 收盘价回放账户每日权益。"""
+        if not records:
+            return []
+
+        start_date = min(row.created_at.date() for row in records)
+        end_date = max(row.created_at.date() for row in records)
+        symbols = sorted({row.symbol for row in records if row.symbol})
+        history_map = await run_sync(
+            get_stock_history_batch,
+            symbols,
+            start_date,
+            end_date,
+        )
+        price_by_symbol_date: dict[str, dict[date, float]] = {}
+        all_market_dates: set[date] = set()
+        for symbol, bars in history_map.items():
+            price_by_date: dict[date, float] = {}
+            for bar in bars:
+                try:
+                    bar_date = datetime.strptime(bar.date, "%Y-%m-%d").date()
+                except ValueError:
+                    continue
+                if start_date <= bar_date <= end_date and bar.close > 0:
+                    price_by_date[bar_date] = float(bar.close)
+                    all_market_dates.add(bar_date)
+            price_by_symbol_date[symbol] = price_by_date
+
+        if not all_market_dates:
+            return []
+
+        records_by_date: dict[date, list[RecordModel]] = defaultdict(list)
+        for row in records:
+            records_by_date[row.created_at.date()].append(row)
+
+        cash = float(initial_capital)
+        lots: dict[str, deque[_Lot]] = defaultdict(deque)
+        latest_price: dict[str, float] = {}
+        previous_total = initial_capital
+        snapshots: list[_DailyAccountSnapshot] = []
+
+        for trade_date in sorted(all_market_dates):
+            for row in records_by_date.get(trade_date, []):
+                price = float(row.price)
+                quantity = int(row.quantity)
+                commission = float(getattr(row, "commission", 0.0) or 0.0)
+                amount = round(price * quantity, 2)
+                if row.side == "buy":
+                    cash -= amount + commission
+                    unit_cost = round((amount + commission) / quantity, 4) if quantity > 0 else price
+                    lots[row.symbol].append(_Lot(quantity=quantity, unit_cost=unit_cost, bought_at=row.created_at))
+                else:
+                    cash += amount - commission
+                    remaining = quantity
+                    symbol_lots = lots[row.symbol]
+                    while remaining > 0 and symbol_lots:
+                        lot = symbol_lots[0]
+                        take = min(remaining, lot.quantity)
+                        lot.quantity -= take
+                        remaining -= take
+                        if lot.quantity == 0:
+                            symbol_lots.popleft()
+                latest_price[row.symbol] = price
+
+            holding_value = 0.0
+            for symbol, symbol_lots in lots.items():
+                quantity = sum(lot.quantity for lot in symbol_lots)
+                if quantity <= 0:
+                    continue
+                market_price = price_by_symbol_date.get(symbol, {}).get(trade_date)
+                if market_price is not None:
+                    latest_price[symbol] = market_price
+                price = latest_price.get(symbol)
+                if price is None:
+                    continue
+                holding_value += quantity * price
+
+            total_asset = round(cash + holding_value, 2)
+            daily_pnl = round(total_asset - previous_total, 2)
+            snapshots.append(
+                _DailyAccountSnapshot(
+                    trade_date=trade_date,
+                    total_asset=total_asset,
+                    available_cash=round(cash, 2),
+                    holding_value=round(holding_value, 2),
+                    daily_pnl=daily_pnl,
+                )
+            )
+            previous_total = total_asset
+
+        return snapshots
+
+    async def _get_or_build_account_snapshots(
+        self,
+        session: AsyncSession,
+        account_id: str,
+        records: list[RecordModel],
+        *,
+        initial_capital: float = DEFAULT_INITIAL_CAPITAL,
+    ) -> list[SnapshotModel]:
+        existing = await self._load_account_snapshots(session, account_id)
+        if records:
+            latest_record_date = max(row.created_at.date() for row in records)
+            latest_snapshot_date = max((row.trade_date for row in existing), default=None)
+            if latest_snapshot_date is None or latest_snapshot_date < latest_record_date:
+                generated = await self._build_snapshots_from_market_history(
+                    records,
+                    initial_capital=initial_capital,
+                )
+                await self._upsert_account_snapshots(session, account_id, generated)
+                await session.flush()
+                existing = await self._load_account_snapshots(session, account_id)
+        return existing
 
     async def _refresh_account_snapshot(
         self,
@@ -623,7 +927,7 @@ class TradingService:
         stmt = (
             select(TradeLogModel)
             .where(TradeLogModel.account_id == account_id)
-            .order_by(TradeLogModel.created_at.asc(), TradeLogModel.id.asc())
+            .order_by(TradeLogModel.created_at.desc(), TradeLogModel.id.desc())
             .limit(limit)
         )
         result = await session.execute(stmt)
@@ -638,17 +942,142 @@ class TradingService:
             except Exception:
                 record_ids = []
             related_records = [replay.record_map[record_id] for record_id in record_ids if record_id in replay.record_map]
+            content = self._normalize_analysis_content(log.log_type, log.content or "")
             items.append(
                 TradeLogItem(
                     log_id=log.id,
                     log_type=log.log_type,
                     trade_records=related_records,
                     title=log.title or "",
-                    content=self._normalize_analysis_content(log.log_type, log.content or ""),
+                    content=content,
+                    sections=self._extract_analysis_sections(log.log_type, content),
                     created_at=log.created_at,
                 )
             )
         return items
+
+    async def async_generate_reflection_for_latest_trade(
+        self,
+        session: AsyncSession,
+        *,
+        account: AccountModel,
+        researcher: ResearcherModel | None,
+    ) -> TradeLogItem:
+        """基于最近一条真实成交记录调用 LLM 生成 AI 复盘并落库。"""
+        records, replay = await self._load_replay(session, account.id)
+        if not records:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="暂无成交记录可复盘")
+
+        latest_row = records[-1]
+        latest_record = replay.record_map.get(latest_row.id)
+        if latest_record is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="最近成交记录不可用")
+
+        trade_context = {
+            "mode": "manual_reflection",
+            "side": latest_record.side,
+            "symbol": latest_record.symbol,
+            "name": latest_record.name,
+            "price": latest_record.price,
+            "quantity": latest_record.quantity,
+            "amount": latest_record.amount,
+            "commission": latest_record.commission,
+            "reason": "基于最近一笔真实成交日志补生成复盘",
+            "cost_price": latest_record.cost_price,
+            "realized_pnl": latest_record.realized_pnl,
+            "realized_pnl_pct": latest_record.realized_pnl_pct,
+            "position_ratio": latest_record.position_ratio,
+            "total_asset": float(account.total_asset),
+            "available_cash": float(account.available_cash),
+        }
+        quote_map = await self._load_realtime_quotes([latest_record.symbol], cache_only=False)
+        trade_context["market_snapshot"] = await self._build_trade_market_snapshot(
+            latest_record.symbol,
+            quote_map.get(latest_record.symbol),
+        )
+        try:
+            reflection = await _reflection_skill.build_trade_reflection(
+                researcher_name=researcher.name if researcher else "交易研究员",
+                researcher_prompt=researcher.prompt if researcher else "",
+                trade_context=trade_context,
+                allow_fallback=False,
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"AI 复盘生成失败：{exc}",
+            ) from exc
+        content = self._normalize_analysis_content("analysis", reflection)
+        log = TradeLogModel(
+            id=f"tl_{uuid4().hex[:8]}",
+            account_id=account.id,
+            log_type="analysis",
+            trade_record_ids="[]",
+            title=_reflection_skill.build_trade_log_title(trade_context),
+            content=content,
+        )
+        session.add(log)
+        await session.commit()
+        self._cache_invalidate([f"replay:{account.id}"])
+        return TradeLogItem(
+            log_id=log.id,
+            log_type=log.log_type,
+            trade_records=[],
+            title=log.title or "",
+            content=content,
+            sections=self._extract_analysis_sections("analysis", content),
+            created_at=log.created_at,
+        )
+
+    async def async_snapshot_account(
+        self,
+        session: AsyncSession,
+        account: AccountModel,
+        *,
+        trade_date: date | None = None,
+    ) -> _DailyAccountSnapshot:
+        """刷新账户当前行情并持久化当天账户快照。"""
+        snapshot_date = trade_date or datetime.now().date()
+        await self._refresh_account_snapshot(session, account, cache_only=False)
+        existing = await self._load_account_snapshots(session, account.id)
+        previous_rows = [row for row in existing if row.trade_date < snapshot_date]
+        previous_total = (
+            float(max(previous_rows, key=lambda row: row.trade_date).total_asset)
+            if previous_rows
+            else DEFAULT_INITIAL_CAPITAL
+        )
+        snapshot = _DailyAccountSnapshot(
+            trade_date=snapshot_date,
+            total_asset=round(float(account.total_asset), 2),
+            available_cash=round(float(account.available_cash), 2),
+            holding_value=round(float(account.holding_value), 2),
+            daily_pnl=round(float(account.total_asset) - previous_total, 2),
+        )
+        await self._upsert_account_snapshots(session, account.id, [snapshot])
+        self._cache_invalidate([f"stats:{account.id}", f"account:", f"positions:{account.id}"])
+        return snapshot
+
+    @staticmethod
+    def _fill_weekday_equity(daily_equity: dict[str, float]) -> dict[str, float]:
+        """补齐交易区间内工作日权益；无成交日沿用上一交易日权益。"""
+        if not daily_equity:
+            return {}
+
+        parsed_dates = [datetime.strptime(day, "%Y-%m-%d").date() for day in daily_equity]
+        start_date = min(parsed_dates)
+        end_date = max(parsed_dates)
+        filled: dict[str, float] = {}
+        previous_equity: float | None = None
+        cursor = start_date
+        while cursor <= end_date:
+            if cursor.weekday() < 5:
+                key = cursor.strftime("%Y-%m-%d")
+                if key in daily_equity:
+                    previous_equity = daily_equity[key]
+                if previous_equity is not None:
+                    filled[key] = previous_equity
+            cursor += timedelta(days=1)
+        return filled
 
     @staticmethod
     def _normalize_analysis_content(log_type: str, content: str) -> str:
@@ -667,6 +1096,42 @@ class TradingService:
             "## 次日展望\n"
             "下一交易日优先观察持仓标的开盘强弱、板块延续性和风险事件变化。若价格偏离策略预期，应按模拟盘规则继续执行止盈止损与轮动纪律。"
         )
+
+    @staticmethod
+    def _extract_analysis_sections(log_type: str, content: str) -> list[TradeLogSection]:
+        """从 Markdown 复盘中提取工作台需要的三段结构化内容。"""
+        if log_type != "analysis":
+            return []
+
+        section_defs = [
+            ("trade_review", "交易复盘"),
+            ("execution_reflection", "执行反思"),
+            ("next_day_outlook", "次日展望"),
+        ]
+        lines = content.strip().splitlines()
+        sections: dict[str, list[str]] = {key: [] for key, _ in section_defs}
+        title_to_key = {title: key for key, title in section_defs}
+        current_key: str | None = None
+
+        for line in lines:
+            stripped = line.strip()
+            heading_match = re.match(r"^##\s+(.+?)\s*$", stripped)
+            if heading_match:
+                heading = heading_match.group(1).strip()
+                current_key = title_to_key.get(heading)
+                continue
+            if current_key is not None:
+                sections[current_key].append(line)
+
+        return [
+            TradeLogSection(
+                key=key,
+                title=title,
+                content="\n".join(sections[key]).strip(),
+            )
+            for key, title in section_defs
+            if "\n".join(sections[key]).strip()
+        ]
 
     async def async_get_all(
         self,
@@ -763,9 +1228,16 @@ class TradingService:
             self._cache_set(cache_key, data, STATS_CACHE_TTL_SECONDS)
             return data
 
-        daily_equity = dict(replay.daily_equity)
-        today_str = datetime.now().date().strftime("%Y-%m-%d")
-        daily_equity[today_str] = round(total_asset, 2)
+        snapshots = await self._get_or_build_account_snapshots(
+            session,
+            account_id,
+            records,
+            initial_capital=initial_capital,
+        )
+        daily_equity = {
+            snapshot.trade_date.strftime("%Y-%m-%d"): round(float(snapshot.total_asset), 2)
+            for snapshot in snapshots
+        }
 
         sorted_dates = sorted(daily_equity.keys())
         equity_curve = [EquityPoint(date=date, equity=round(daily_equity[date], 2)) for date in sorted_dates]
@@ -993,12 +1465,14 @@ class TradingService:
 
         try:
             redis = get_container().redis.get_client()
-            await refresh_cached_quotes(redis, [payload.symbol])
+            refreshed_quotes = await refresh_cached_quotes(redis, [payload.symbol])
+            quote = refreshed_quotes.get(payload.symbol) or quote
         except Exception:
             pass
 
         await self._refresh_account_snapshot(session, acc)
         positions = await pos_repo.list_by_account(acc.id)
+        market_snapshot = await self._build_trade_market_snapshot(payload.symbol, quote)
         await self._append_trade_reflection_log(
             session,
             account_id=acc.id,
@@ -1020,6 +1494,7 @@ class TradingService:
                 "total_asset": float(acc.total_asset),
                 "available_cash": float(acc.available_cash),
                 "holding_names": [position.name for position in positions],
+                "market_snapshot": market_snapshot,
             },
         )
         await session.commit()

@@ -7,7 +7,9 @@
 """
 from __future__ import annotations
 
-from sqlalchemy import Float, ForeignKey, Index, Integer, String, Text
+from datetime import date
+
+from sqlalchemy import Date, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
@@ -95,5 +97,23 @@ class TradeLog(Base, TimestampMixin):
     content: Mapped[str] = mapped_column(Text, nullable=False, default="")
     # 标题（可选，如 "当前操作情况总结"）
     title: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+
+    account = relationship("TradingAccount")
+
+
+class TradingAccountSnapshot(Base, TimestampMixin):
+    """每日账户快照，用于真实历史收益曲线和投资日历。"""
+    __tablename__ = "trading_account_snapshots"
+    __table_args__ = (
+        Index("ix_trading_account_snapshots_account_date", "account_id", "trade_date", unique=True),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    account_id: Mapped[str] = mapped_column(String(36), ForeignKey("trading_accounts.id"), nullable=False, index=True)
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+    total_asset: Mapped[float] = mapped_column(Float, nullable=False)
+    available_cash: Mapped[float] = mapped_column(Float, nullable=False)
+    holding_value: Mapped[float] = mapped_column(Float, nullable=False)
+    daily_pnl: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 
     account = relationship("TradingAccount")

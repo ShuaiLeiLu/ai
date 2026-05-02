@@ -89,8 +89,7 @@ class StockNewsSummary(SchemaModel):
 
 
 class NewsAnalysisAllData(SchemaModel):
-    """资讯分析聚合数据 —— 一次请求返回全部。"""
+    """资讯分析聚合数据 —— 一次请求返回全部（不含 AI 面板，AI 面板由用户点击触发）。"""
     feed: list[NewsAnalysisItem]
-    ai_panels: list[NewsAiPanel]
     hot_stocks: list[HotStockTag]
     hot_news: list[HotNewsRankItem]

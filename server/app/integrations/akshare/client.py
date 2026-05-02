@@ -27,7 +27,6 @@ import logging
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from functools import partial
@@ -43,7 +42,6 @@ logger = logging.getLogger(__name__)
 # 用于 run_in_executor 的线程池（AKShare 是同步阻塞调用）
 _executor = ThreadPoolExecutor(max_workers=12, thread_name_prefix="akshare")
 T = TypeVar("T")
-_akshare_proxy_guard = Lock()
 _AKSHARE_PROXY_ENV_KEYS = (
     "HTTP_PROXY",
     "HTTPS_PROXY",
@@ -53,6 +51,32 @@ _AKSHARE_PROXY_ENV_KEYS = (
     "all_proxy",
 )
 _no_proxy_url_opener = build_opener(ProxyHandler({}))
+_proxy_bypass_installed = False
+_proxy_install_lock = Lock()
+
+
+def _install_proxy_bypass() -> None:
+    """一次性清除代理环境变量并 patch requests.Session，之后所有 AKShare 调用无需加锁。"""
+    global _proxy_bypass_installed
+    if _proxy_bypass_installed:
+        return
+    with _proxy_install_lock:
+        if _proxy_bypass_installed:
+            return
+        for key in _AKSHARE_PROXY_ENV_KEYS:
+            os.environ.pop(key, None)
+
+        import requests
+        _original_merge = requests.sessions.Session.merge_environment_settings
+
+        def merge_without_proxy(self: Any, url: str, proxies: Any, stream: Any, verify: Any, cert: Any) -> dict[str, Any]:
+            settings = _original_merge(self, url, proxies, stream, verify, cert)
+            settings["proxies"] = {}
+            return settings
+
+        requests.sessions.Session.merge_environment_settings = merge_without_proxy  # type: ignore[assignment]
+        _proxy_bypass_installed = True
+        logger.info("[AKShare] 代理绕过已安装，后续调用无需加锁")
 
 
 # ════════════════════════════════════════════════════════════
@@ -69,48 +93,13 @@ async def run_sync(fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
     return await loop.run_in_executor(_executor, func)
 
 
-@contextmanager
-def _without_proxy_env() -> Any:
-    """Temporarily remove process-level proxy env vars for AKShare HTTP calls."""
-    previous = {key: os.environ.pop(key, None) for key in _AKSHARE_PROXY_ENV_KEYS}
-    try:
-        yield
-    finally:
-        for key, value in previous.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
-
-
-@contextmanager
-def _without_requests_proxy() -> Any:
-    """Force requests calls made by AKShare to ignore environment proxies."""
-    import requests
-
-    original_merge = requests.sessions.Session.merge_environment_settings
-
-    def merge_without_proxy(self: Any, url: str, proxies: Any, stream: Any, verify: Any, cert: Any) -> dict[str, Any]:
-        settings = original_merge(self, url, proxies, stream, verify, cert)
-        settings["proxies"] = {}
-        return settings
-
-    requests.sessions.Session.merge_environment_settings = merge_without_proxy
-    try:
-        yield
-    finally:
-        requests.sessions.Session.merge_environment_settings = original_merge
-
-
 def call_akshare_api(api_name: str, /, *args: Any, **kwargs: Any) -> Any:
     """Call an AKShare API while bypassing broken shell proxy settings."""
+    _install_proxy_bypass()
     import akshare as ak
 
     api = getattr(ak, api_name)
-    with _akshare_proxy_guard:
-        with _without_proxy_env():
-            with _without_requests_proxy():
-                return api(*args, **kwargs)
+    return api(*args, **kwargs)
 
 
 # ════════════════════════════════════════════════════════════
@@ -162,14 +151,32 @@ _stock_quote_locks: dict[str, Lock] = {}
 
 # 缓存 TTL 配置（秒）
 CACHE_TTL_REALTIME = 15       # 实时行情：15 秒
-CACHE_TTL_NEWS = 120          # 新闻资讯：2 分钟
-CACHE_TTL_POOL = 60           # 涨停/跌停/强势池：1 分钟
-CACHE_TTL_INDEX = 30          # 指数行情：30 秒
+CACHE_TTL_INDEX = 15          # 指数行情：15 秒
+CACHE_TTL_NEWS = 60           # 新闻资讯：60 秒
+CACHE_TTL_INDUSTRY = 60       # 行业板块：60 秒
+CACHE_TTL_LIMIT_UP = 30       # 涨停池/天梯：30 秒
+CACHE_TTL_LIMIT_DOWN = 15     # 跌停/跌幅榜：15 秒
+CACHE_TTL_STRONG = 15         # 强势股/涨幅榜：15 秒
 
 
 # ════════════════════════════════════════════════════════════
 # 数据返回类型（纯 dataclass，不依赖 pydantic）
 # ════════════════════════════════════════════════════════════
+
+@dataclass
+class HistoryBar:
+    """个股历史日 K 线一根。"""
+    symbol: str          # 代码（不含交易所前缀）
+    date: str            # 交易日 YYYY-MM-DD
+    open: float          # 开盘价
+    close: float         # 收盘价
+    high: float          # 最高价
+    low: float           # 最低价
+    volume: float        # 成交量（股）
+    amount: float        # 成交额（元）
+    change_pct: float    # 涨跌幅（%）
+    turnover: float      # 换手率（%）
+
 
 @dataclass
 class StockQuote:
@@ -186,6 +193,11 @@ class StockQuote:
     volume: float        # 成交量（股）
     amount: float        # 成交额（元）
     timestamp: str       # 数据时间戳
+    turnover_ratio: float = 0.0        # 换手率（%）
+    volume_ratio: float = 0.0          # 量比
+    industry: str = ""                 # 所属行业
+    main_net_inflow: float = 0.0       # 主力净流入（元）
+    main_net_inflow_pct: float = 0.0   # 主力净占比（%）
 
 
 @dataclass
@@ -334,11 +346,57 @@ def _eastmoney_secid(symbol: str) -> str:
     return f"0.{symbol}"
 
 
+def _tencent_realtime_symbol(symbol: str) -> str:
+    return f"sh{symbol}" if symbol.startswith(("6", "9")) else f"sz{symbol}"
+
+
+def _parse_tencent_timestamp(raw: str) -> str:
+    if len(raw) >= 14 and raw.isdigit():
+        return f"{raw[:4]}-{raw[4:6]}-{raw[6:8]} {raw[8:10]}:{raw[10:12]}:{raw[12:14]}"
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _fetch_stock_quote_tencent(symbol: str) -> StockQuote | None:
+    url = f"https://qt.gtimg.cn/q={_tencent_realtime_symbol(symbol)}"
+    request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    _install_proxy_bypass()
+    response = _no_proxy_url_opener.open(request, timeout=8)
+    text = response.read().decode("gbk", errors="ignore")
+    if '="' not in text:
+        return None
+    payload = text.split('="', 1)[1].split('";', 1)[0]
+    parts = payload.split("~")
+    if len(parts) < 50:
+        return None
+    code = _safe_str(parts[2])
+    price = _safe_float(parts[3])
+    if not code or price <= 0:
+        return None
+    quote = StockQuote(
+        symbol=code,
+        name=_safe_str(parts[1], code),
+        price=price,
+        change=_safe_float(parts[31]),
+        change_pct=_safe_float(parts[32]),
+        open=_safe_float(parts[5]),
+        high=_safe_float(parts[33]),
+        low=_safe_float(parts[34]),
+        prev_close=_safe_float(parts[4]),
+        volume=_safe_float(parts[36]),
+        amount=_safe_float(parts[37]) * 10000,
+        timestamp=_parse_tencent_timestamp(_safe_str(parts[30])),
+        turnover_ratio=_safe_float(parts[38]),
+        volume_ratio=_safe_float(parts[49]),
+    )
+    _cache.set(_stock_quote_cache_key(code), quote, CACHE_TTL_REALTIME)
+    return quote
+
+
 def _fetch_stock_quotes_eastmoney(symbols: list[str]) -> dict[str, StockQuote]:
     if not symbols:
         return {}
 
-    fields = "f2,f3,f4,f5,f6,f12,f14,f15,f16,f17,f18"
+    fields = "f2,f3,f4,f5,f6,f8,f10,f12,f14,f15,f16,f17,f18,f62,f100,f184"
     params = urlencode({
         "fltt": "2",
         "fields": fields,
@@ -346,10 +404,9 @@ def _fetch_stock_quotes_eastmoney(symbols: list[str]) -> dict[str, StockQuote]:
     })
     url = f"https://push2.eastmoney.com/api/qt/ulist.np/get?{params}"
     request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with _akshare_proxy_guard:
-        with _without_proxy_env():
-            response = _no_proxy_url_opener.open(request, timeout=8)
-            payload = json.loads(response.read().decode("utf-8"))
+    _install_proxy_bypass()
+    response = _no_proxy_url_opener.open(request, timeout=8)
+    payload = json.loads(response.read().decode("utf-8"))
 
     quotes: dict[str, StockQuote] = {}
     for row in (payload.get("data") or {}).get("diff") or []:
@@ -370,6 +427,11 @@ def _fetch_stock_quotes_eastmoney(symbols: list[str]) -> dict[str, StockQuote]:
             volume=_safe_float(row.get("f5")),
             amount=_safe_float(row.get("f6")),
             timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            turnover_ratio=_safe_float(row.get("f8")),
+            volume_ratio=_safe_float(row.get("f10")),
+            industry=_safe_str(row.get("f100")),
+            main_net_inflow=_safe_float(row.get("f62")),
+            main_net_inflow_pct=_safe_float(row.get("f184")),
         )
         _cache.set(_stock_quote_cache_key(symbol), quote, CACHE_TTL_REALTIME)
         quotes[symbol] = quote
@@ -416,8 +478,12 @@ def _fetch_stock_quote(symbol: str) -> StockQuote | None:
         try:
             df = call_akshare_api("stock_bid_ask_em", symbol=symbol)
         except Exception:
-            logger.exception("获取个股实时行情失败：%s", symbol)
-            return None
+            logger.warning("AKShare 单股实时行情失败，尝试腾讯行情：%s", symbol)
+            try:
+                return _fetch_stock_quote_tencent(symbol)
+            except Exception:
+                logger.exception("获取个股实时行情失败：%s", symbol)
+                return None
 
         if df.empty:
             return None
@@ -443,6 +509,8 @@ def _fetch_stock_quote(symbol: str) -> StockQuote | None:
             volume=_safe_float(item_map.get("总手")),
             amount=_safe_float(item_map.get("金额")),
             timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            turnover_ratio=_safe_float(item_map.get("换手")),
+            volume_ratio=_safe_float(item_map.get("量比")),
         )
         _cache.set(_stock_quote_cache_key(symbol), quote, CACHE_TTL_REALTIME)
         return quote
@@ -517,7 +585,11 @@ def get_stock_quote_by_symbols(symbols: list[str]) -> dict[str, StockQuote]:
         try:
             quotes.update(_fetch_stock_quotes_eastmoney(missing_symbols))
         except Exception:
-            logger.exception("批量获取个股实时行情失败：%s", ",".join(missing_symbols))
+            logger.warning("批量获取个股实时行情失败，逐只尝试备用源：%s", ",".join(missing_symbols))
+            for symbol in missing_symbols:
+                quote = _fetch_stock_quote(symbol)
+                if quote is not None:
+                    quotes[symbol] = quote
     return quotes
 
 
@@ -535,7 +607,7 @@ def peek_stock_quote_by_symbols(symbols: list[str]) -> dict[str, StockQuote]:
 def get_index_quotes() -> list[IndexQuote]:
     """获取 A 股主要指数实时行情（新浪数据源）。
 
-    数据缓存 30 秒。
+    数据缓存 15 秒。
     """
     cache_key = "index_quotes"
     cached = _cache.get(cache_key)
@@ -580,7 +652,7 @@ def get_news_main() -> list[NewsItem]:
     """获取财经头条新闻（财新数据源）。
 
     返回约 100 条最新财经新闻。
-    数据缓存 2 分钟。
+    数据缓存 60 秒。
     """
     cache_key = "news_main"
     cached = _cache.get(cache_key)
@@ -610,7 +682,7 @@ def get_news_main() -> list[NewsItem]:
 def get_stock_news(symbol: str, limit: int = 20) -> list[StockNewsItem]:
     """获取个股新闻（东方财富数据源）。
 
-    数据缓存 2 分钟（按个股缓存）。
+    数据缓存 60 秒（按个股缓存）。
     """
     cache_key = f"stock_news:{symbol}"
     cached = _cache.get(cache_key)
@@ -644,7 +716,7 @@ def get_live_news_ths() -> list[LiveNewsItem]:
 
     数据质量高：有标题、正文、精确时间和原文链接。
     返回约 20 条最新快讯。
-    数据缓存 2 分钟。
+    数据缓存 60 秒。
     """
     cache_key = "live_news_ths"
     cached = _cache.get(cache_key)
@@ -676,7 +748,7 @@ def get_live_news_cls() -> list[LiveNewsItem]:
     """获取财联社全球快讯。
 
     返回约 20 条最新快讯。
-    数据缓存 2 分钟。
+    数据缓存 60 秒。
     """
     cache_key = "live_news_cls"
     cached = _cache.get(cache_key)
@@ -735,7 +807,7 @@ def get_industry_boards() -> list[IndustryBoard]:
     """获取同花顺行业板块涨跌概况。
 
     返回约 90 个行业板块的实时涨跌数据。
-    数据缓存 1 分钟。
+    数据缓存 60 秒。
     """
     cache_key = "industry_boards"
     cached = _cache.get(cache_key)
@@ -762,7 +834,7 @@ def get_industry_boards() -> list[IndustryBoard]:
             leading_stock_pct=_safe_float(row.get("领涨股-涨跌幅")),
         ))
 
-    _cache.set(cache_key, items, CACHE_TTL_POOL)
+    _cache.set(cache_key, items, CACHE_TTL_INDUSTRY)
     logger.info("获取行业板块成功：%d 个板块", len(items))
     return items
 
@@ -770,7 +842,7 @@ def get_industry_boards() -> list[IndustryBoard]:
 def get_limit_up_pool(trade_date: date | None = None) -> list[LimitUpStock]:
     """获取涨停股池（东方财富数据源）。
 
-    数据缓存 1 分钟。
+    数据缓存 30 秒。
     """
     dt_str = (trade_date or _latest_trade_date()).strftime("%Y%m%d")
     cache_key = f"limit_up:{dt_str}"
@@ -801,7 +873,7 @@ def get_limit_up_pool(trade_date: date | None = None) -> list[LimitUpStock]:
             industry=_safe_str(row.get("所属行业")),
         ))
 
-    _cache.set(cache_key, items, CACHE_TTL_POOL)
+    _cache.set(cache_key, items, CACHE_TTL_LIMIT_UP)
     logger.info("获取涨停池成功：%s -> %d 条", dt_str, len(items))
     return items
 
@@ -831,7 +903,7 @@ def get_limit_down_pool(trade_date: date | None = None) -> list[LimitDownStock]:
             turnover_ratio=_safe_float(row.get("换手率")),
         ))
 
-    _cache.set(cache_key, items, CACHE_TTL_POOL)
+    _cache.set(cache_key, items, CACHE_TTL_LIMIT_DOWN)
     return items
 
 
@@ -860,7 +932,7 @@ def get_strong_pool(trade_date: date | None = None) -> list[StrongStock]:
             turnover_ratio=_safe_float(row.get("换手率")),
         ))
 
-    _cache.set(cache_key, items, CACHE_TTL_POOL)
+    _cache.set(cache_key, items, CACHE_TTL_STRONG)
     return items
 
 
@@ -889,3 +961,216 @@ def _latest_trade_date() -> date:
 def invalidate_cache(prefix: str = "") -> None:
     """手动清除缓存。可选按前缀清除。"""
     _cache.invalidate(prefix)
+
+
+# ════════════════════════════════════════════════════════════
+# 历史日 K 线（用于回放 / backfill）
+# ════════════════════════════════════════════════════════════
+
+CACHE_TTL_HISTORY = 24 * 3600   # 历史 K 线缓存 24 小时
+
+
+def get_stock_history(
+    symbol: str,
+    start_date: date,
+    end_date: date,
+    *,
+    adjust: str = "qfq",
+) -> list[HistoryBar]:
+    """获取个股历史日 K 线（前复权，AKShare ak.stock_zh_a_hist）。
+
+    参数：
+        symbol: 6 位代码（如 "600519"），不含交易所前缀
+        start_date / end_date: 闭区间日期
+        adjust: "qfq" 前复权 / "hfq" 后复权 / "" 不复权
+
+    返回：
+        按交易日升序排列的 HistoryBar 列表；停牌或区间无数据时返回 []。
+
+    说明：
+        AKShare 的 stock_zh_a_hist 返回列：
+        日期 / 股票代码 / 开盘 / 收盘 / 最高 / 最低 / 成交量 / 成交额 /
+        振幅 / 涨跌幅 / 涨跌额 / 换手率
+    """
+    if not symbol:
+        return []
+
+    cache_key = f"hist:{symbol}:{start_date.isoformat()}:{end_date.isoformat()}:{adjust}"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        df = call_akshare_api(
+            "stock_zh_a_hist",
+            symbol=symbol,
+            period="daily",
+            start_date=start_date.strftime("%Y%m%d"),
+            end_date=end_date.strftime("%Y%m%d"),
+            adjust=adjust,
+        )
+    except Exception as exc:
+        logger.warning(
+            "AKShare 历史日 K 失败，尝试腾讯行情：%s %s~%s (%s)",
+            symbol,
+            start_date,
+            end_date,
+            exc,
+        )
+        bars = _get_stock_history_from_tencent(symbol, start_date, end_date, adjust=adjust)
+        _cache.set(cache_key, bars, CACHE_TTL_HISTORY)
+        return bars
+
+    bars: list[HistoryBar] = []
+    if df is None or df.empty:
+        _cache.set(cache_key, bars, CACHE_TTL_HISTORY)
+        return bars
+
+    for _, row in df.iterrows():
+        raw_date = row.get("日期")
+        date_str = ""
+        if isinstance(raw_date, str):
+            date_str = raw_date[:10]
+        else:
+            try:
+                date_str = pd.to_datetime(raw_date).strftime("%Y-%m-%d")
+            except Exception:
+                date_str = str(raw_date)[:10]
+        bars.append(HistoryBar(
+            symbol=symbol,
+            date=date_str,
+            open=_safe_float(row.get("开盘")),
+            close=_safe_float(row.get("收盘")),
+            high=_safe_float(row.get("最高")),
+            low=_safe_float(row.get("最低")),
+            volume=_safe_float(row.get("成交量")),
+            amount=_safe_float(row.get("成交额")),
+            change_pct=_safe_float(row.get("涨跌幅")),
+            turnover=_safe_float(row.get("换手率")),
+        ))
+
+    _cache.set(cache_key, bars, CACHE_TTL_HISTORY)
+    return bars
+
+
+def _tencent_symbol(symbol: str) -> str:
+    if symbol.startswith(("6", "9")):
+        return f"sh{symbol}"
+    return f"sz{symbol}"
+
+
+def _get_stock_history_from_tencent(
+    symbol: str,
+    start_date: date,
+    end_date: date,
+    *,
+    adjust: str = "qfq",
+) -> list[HistoryBar]:
+    """腾讯行情历史日 K fallback。
+
+    返回字段足以支撑模拟盘每日账户快照：日期、开盘、收盘、最高、最低、成交量。
+    """
+    code = _tencent_symbol(symbol)
+    series_key = "qfqday" if adjust == "qfq" else "hfqday" if adjust == "hfq" else "day"
+    url = (
+        "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?"
+        f"param={code},day,{start_date.isoformat()},{end_date.isoformat()},800,{adjust or 'qfq'}"
+    )
+
+    try:
+        req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with _no_proxy_url_opener.open(req, timeout=12) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        logger.exception("腾讯历史日 K 失败：%s %s~%s", symbol, start_date, end_date)
+        return []
+
+    rows = (
+        payload.get("data", {})
+        .get(code, {})
+        .get(series_key)
+        or payload.get("data", {}).get(code, {}).get("day")
+        or []
+    )
+    bars: list[HistoryBar] = []
+    for row in rows:
+        if len(row) < 6:
+            continue
+        try:
+            trade_date = str(row[0])[:10]
+            bars.append(
+                HistoryBar(
+                    symbol=symbol,
+                    date=trade_date,
+                    open=_safe_float(row[1]),
+                    close=_safe_float(row[2]),
+                    high=_safe_float(row[3]),
+                    low=_safe_float(row[4]),
+                    volume=_safe_float(row[5]),
+                    amount=0.0,
+                    change_pct=0.0,
+                    turnover=0.0,
+                )
+            )
+        except Exception:
+            continue
+    return bars
+
+
+def get_stock_history_batch(
+    symbols: list[str],
+    start_date: date,
+    end_date: date,
+    *,
+    adjust: str = "qfq",
+) -> dict[str, list[HistoryBar]]:
+    """批量获取多只股票的历史日 K 线（串行调用 + 单股缓存）。"""
+    result: dict[str, list[HistoryBar]] = {}
+    for symbol in sorted({s for s in symbols if s}):
+        result[symbol] = get_stock_history(symbol, start_date, end_date, adjust=adjust)
+    return result
+
+
+def list_recent_trade_dates(end_date: date, count: int) -> list[date]:
+    """返回截止 end_date（含）的最近 count 个 A 股交易日（升序）。
+
+    实现：用上证指数 ak.stock_zh_index_daily(symbol="sh000001") 在最近 60 天内取
+    实际交易日；不足时回退为简单工作日排除。
+    """
+    from datetime import timedelta
+
+    cache_key = f"trade_dates:{end_date.isoformat()}:{count}"
+    cached = _cache.get(cache_key)
+    if isinstance(cached, list):
+        return cached
+
+    lookback_start = end_date - timedelta(days=count * 2 + 14)
+    dates: list[date] = []
+    try:
+        df = call_akshare_api(
+            "stock_zh_index_daily",
+            symbol="sh000001",
+        )
+        if df is not None and not df.empty:
+            for raw in df["date"].tolist():
+                try:
+                    d = pd.to_datetime(raw).date()
+                except Exception:
+                    continue
+                if lookback_start <= d <= end_date:
+                    dates.append(d)
+            dates.sort()
+    except Exception:
+        logger.exception("获取上证交易日失败，回退为工作日推算")
+
+    if not dates:
+        cursor = end_date
+        while len(dates) < count:
+            if cursor.weekday() < 5:
+                dates.append(cursor)
+            cursor -= timedelta(days=1)
+        dates.sort()
+
+    trimmed = dates[-count:] if len(dates) >= count else dates
+    _cache.set(cache_key, trimmed, CACHE_TTL_HISTORY)
+    return trimmed

@@ -75,8 +75,12 @@ class WorkbenchHiredResearcher(SchemaModel):
     summary: str
     status: str
     tags: list[str] = Field(default_factory=list)
-    today_yield: float
-    win_rate_30d: float
+    today_yield: float | None = None
+    today_yield_rate: float | None = None
+    month_yield_rate: float | None = None
+    total_asset: float | None = None
+    win_rate_30d: float | None = None
+    has_trading_account: bool = False
     level: str
 
 
@@ -88,8 +92,9 @@ class WorkbenchHotDocument(SchemaModel):
     summary: str
     researcher_name: str
     create_time: datetime
-    view_count: int
-    comment_count: int
+    view_count: int | None = None
+    comment_count: int | None = None
+    metrics_ready: bool = False
 
 
 class WorkbenchPublicRankItem(SchemaModel):

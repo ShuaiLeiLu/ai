@@ -1,7 +1,7 @@
 /**
  * MCP市场页面
  *
- * 属于“赛博实验室”子页面之一，路由：/workstation/mcp-market
+ * 属于“极睿实验室”子页面之一，路由：/workstation/mcp-market
  * - 筛选栏：搜索框 + Segmented（全部/已授权/未授权）
  * - 热门推荐区：已授权 MCP 服务卡片
  * - 全部 MCP 服务器：网格卡片列表

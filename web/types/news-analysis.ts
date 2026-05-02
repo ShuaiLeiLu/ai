@@ -82,10 +82,9 @@ export interface StockNewsSummary {
   latest_publish_time: string | null;
 }
 
-/** 资讯分析聚合数据 */
+/** 资讯分析聚合数据（不含 AI 面板，AI 面板由用户点击触发） */
 export interface NewsAnalysisAllData {
   feed: NewsFeedItem[];
-  ai_panels: AIPanelData[];
   hot_stocks: HotStock[];
   hot_news: HotNewsItem[];
 }

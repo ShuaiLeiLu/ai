@@ -19,7 +19,7 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Skeleton, Tag } from 'antd';
-import { LeftOutlined } from '@ant-design/icons';
+import { LeftOutlined, RightOutlined } from '@ant-design/icons';
 import ReactEChartsCore from 'echarts-for-react';
 import dayjs from 'dayjs';
 
@@ -347,6 +347,18 @@ function TradeLogTab({ logs }: { logs: TradeLogItem[] }) {
 
 /** 历史交易 Tab —— 对标参考站：收益曲线、月度收益柱状图、投资日历、风控指标、成交明细 */
 function HistoryTab({ stats, records }: { stats: TradingStats | null; records: TradeRecord[] }) {
+  const availableMonths = useMemo(() => {
+    const months = new Set<string>();
+    for (const item of stats?.daily_returns ?? []) months.add(dayjs(item.date).format('YYYY-MM'));
+    for (const item of stats?.monthly_returns ?? []) months.add(item.month);
+    for (const item of records) months.add(dayjs(item.created_at).format('YYYY-MM'));
+    return [...months].sort();
+  }, [records, stats]);
+  const fallbackMonth = availableMonths.at(-1) ?? dayjs().format('YYYY-MM');
+  const [selectedMonth, setSelectedMonth] = useState(fallbackMonth);
+  const displayMonth = availableMonths.includes(selectedMonth) ? selectedMonth : fallbackMonth;
+  const currentMonthIndex = availableMonths.indexOf(displayMonth);
+
   /** 收益曲线 ECharts 配置 */
   const equityOption = useMemo(() => {
     if (!stats || stats.equity_curve.length === 0) return null;
@@ -445,17 +457,17 @@ function HistoryTab({ stats, records }: { stats: TradingStats | null; records: T
 
   /** 投资日历数据（基于后端 daily_returns） */
   const calendarData = useMemo(() => {
-    const now = dayjs();
-    const startOfMonth = now.startOf('month');
-    const daysInMonth = now.daysInMonth();
-    const result: { day: number; weekday: number; pnl: number }[] = [];
+    const month = dayjs(`${displayMonth}-01`);
+    const startOfMonth = month.startOf('month');
+    const daysInMonth = month.daysInMonth();
+    const result: { day: number; weekday: number; pnl: number; date: string }[] = [];
 
     // 按日聚合
     const dailyMap: Record<number, number> = {};
     if (stats?.daily_returns) {
       for (const dr of stats.daily_returns) {
         const d = dayjs(dr.date);
-        if (d.month() === now.month() && d.year() === now.year()) {
+        if (d.format('YYYY-MM') === displayMonth) {
           dailyMap[d.date()] = dr.pnl;
         }
       }
@@ -463,10 +475,10 @@ function HistoryTab({ stats, records }: { stats: TradingStats | null; records: T
 
     for (let i = 1; i <= daysInMonth; i++) {
       const date = startOfMonth.date(i);
-      result.push({ day: i, weekday: date.day(), pnl: dailyMap[i] || 0 });
+      result.push({ day: i, weekday: date.day(), pnl: dailyMap[i] || 0, date: date.format('YYYY-MM-DD') });
     }
     return result;
-  }, [stats]);
+  }, [displayMonth, stats]);
 
   /** 风控指标来自后端 */
   const risk = stats?.risk;
@@ -515,7 +527,27 @@ function HistoryTab({ stats, records }: { stats: TradingStats | null; records: T
         <div className="rounded-lg border border-slate-100 bg-white p-4 flex flex-col">
           <div className="flex items-center justify-between mb-3">
             <div className="text-sm font-medium text-slate-700">投资日历</div>
-            <div className="text-xs text-slate-400">{dayjs().format('YYYY年M月')}</div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                aria-label="上个月"
+                disabled={currentMonthIndex <= 0}
+                onClick={() => setSelectedMonth(availableMonths[currentMonthIndex - 1])}
+                className="flex h-6 w-6 items-center justify-center rounded text-slate-400 transition-colors hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-30"
+              >
+                <LeftOutlined style={{ fontSize: 11 }} />
+              </button>
+              <div className="min-w-[78px] text-center text-xs text-slate-500">{dayjs(`${displayMonth}-01`).format('YYYY年M月')}</div>
+              <button
+                type="button"
+                aria-label="下个月"
+                disabled={currentMonthIndex < 0 || currentMonthIndex >= availableMonths.length - 1}
+                onClick={() => setSelectedMonth(availableMonths[currentMonthIndex + 1])}
+                className="flex h-6 w-6 items-center justify-center rounded text-slate-400 transition-colors hover:bg-slate-50 hover:text-slate-700 disabled:cursor-not-allowed disabled:opacity-30"
+              >
+                <RightOutlined style={{ fontSize: 11 }} />
+              </button>
+            </div>
           </div>
           {/* 星期头 */}
           <div className="grid grid-cols-7 gap-1 mb-1">
@@ -527,23 +559,28 @@ function HistoryTab({ stats, records }: { stats: TradingStats | null; records: T
           <div className="grid grid-cols-7 gap-1">
             {/* 月初空白 */}
             {Array.from({ length: calendarData[0]?.weekday || 0 }).map((_, i) => (
-              <div key={`empty-${i}`} className="h-14" />
+              <div key={`empty-${i}`} className="h-16" />
             ))}
             {calendarData.map((d) => {
-              const isToday = d.day === dayjs().date();
-              const hasTrade = d.pnl !== 0;
+              const isToday = d.date === dayjs().format('YYYY-MM-DD');
+              const hasData = stats?.daily_returns.some((item) => item.date === d.date) ?? false;
               /** 收益率：基于初始资金的当日 pnl 百分比 */
-              const pnlPctStr = hasTrade
+              const pnlPctStr = hasData
                 ? `${d.pnl > 0 ? '+' : ''}${((d.pnl / (stats?.initial_capital || 1000000)) * 100).toFixed(2)}%`
+                : '';
+              const pnlMoneyStr = hasData
+                ? `${d.pnl > 0 ? '+' : ''}¥${Math.abs(d.pnl).toLocaleString('zh-CN', {
+                    maximumFractionDigits: 0,
+                  })}`
                 : '';
               return (
                 <div
                   key={d.day}
-                  className={`h-14 flex flex-col items-center justify-center rounded transition-colors ${
+                  className={`h-16 flex flex-col items-center justify-center rounded px-1 transition-colors ${
                     isToday
                       ? 'bg-violet-500 text-white font-bold'
-                      : hasTrade
-                        ? d.pnl > 0
+                      : hasData
+                        ? d.pnl >= 0
                           ? 'bg-rose-50'
                           : 'bg-emerald-50'
                         : 'hover:bg-slate-50'
@@ -554,16 +591,30 @@ function HistoryTab({ stats, records }: { stats: TradingStats | null; records: T
                   }`}>
                     {d.day}
                   </span>
-                  {hasTrade && (
-                    <span className={`text-[10px] leading-tight mt-0.5 ${
-                      isToday
-                        ? 'text-white/80'
-                        : d.pnl > 0
-                          ? 'text-rose-500'
-                          : 'text-emerald-600'
-                    }`}>
-                      {pnlPctStr}
-                    </span>
+                  {hasData && (
+                    <>
+                      <span className={`mt-0.5 text-[10px] leading-tight ${
+                        isToday
+                          ? 'text-white/85'
+                          : d.pnl >= 0
+                            ? 'text-rose-500'
+                            : 'text-emerald-600'
+                      }`}>
+                        {pnlPctStr}
+                      </span>
+                      <span
+                        className={`mt-0.5 max-w-full truncate text-[10px] font-medium leading-tight ${
+                          isToday
+                            ? 'text-white/80'
+                            : d.pnl >= 0
+                              ? 'text-rose-500'
+                              : 'text-emerald-600'
+                        }`}
+                        title={pnlMoneyStr}
+                      >
+                        {pnlMoneyStr}
+                      </span>
+                    </>
                   )}
                 </div>
               );

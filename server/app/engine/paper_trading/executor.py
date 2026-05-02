@@ -23,6 +23,15 @@ logger = logging.getLogger(__name__)
 _trading_reflection_skill = TradingReflectionSkill()
 
 
+async def build_trade_market_snapshot(symbol: str, market_quote: dict | None = None) -> dict:
+    from app.modules.trading.service import TradingService
+
+    service = TradingService()
+    quote_map = await service._load_realtime_quotes([symbol], cache_only=False)
+    quote = quote_map.get(symbol)
+    return await service._build_trade_market_snapshot(symbol, quote)
+
+
 def invalidate_trading_cache(account: TradingAccount, researcher_id: str) -> None:
     from app.modules.trading.service import TradingService
 
@@ -129,6 +138,7 @@ async def do_sell(
         )
     )
     strategy_config = researcher.strategy_config or {}
+    market_snapshot = await build_trade_market_snapshot(pos.symbol, market_quote)
     reflection = await _trading_reflection_skill.build_trade_reflection(
         researcher_name=researcher.name,
         researcher_prompt=researcher.prompt,
@@ -151,6 +161,7 @@ async def do_sell(
             "position_ratio": round(amount / 1_000_000.0, 4),
             "available_cash": float(account.available_cash),
             "total_asset": float(account.available_cash + account.holding_value),
+            "market_snapshot": market_snapshot,
         },
     )
     session.add(
@@ -266,6 +277,7 @@ async def do_buy(
     )
     position_ratio = round(amount / 1_000_000.0, 4)
     strategy_config = researcher.strategy_config or {}
+    market_snapshot = await build_trade_market_snapshot(target["symbol"], target)
     reflection = await _trading_reflection_skill.build_trade_reflection(
         researcher_name=researcher.name,
         researcher_prompt=researcher.prompt,
@@ -283,6 +295,7 @@ async def do_buy(
             "position_ratio": position_ratio,
             "available_cash": float(account.available_cash),
             "total_asset": float(account.available_cash + account.holding_value),
+            "market_snapshot": market_snapshot,
         },
     )
     session.add(

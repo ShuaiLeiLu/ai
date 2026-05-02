@@ -49,7 +49,7 @@ INITIAL_CASH = 1_000_000.0
 DEMO_USER_ID = "u_demo"  # 固定 ID，与 security.py fallback 一致
 DEMO_USER_PHONE = "13800138000"
 DEMO_USER_PASSWORD = "test1234"
-DEMO_USER_NICKNAME = "赛博投研员"
+DEMO_USER_NICKNAME = "极睿智投员"
 
 # ── 研究员配置 ──
 RESEARCHERS = [

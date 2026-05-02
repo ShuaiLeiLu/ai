@@ -60,7 +60,7 @@ function AnomalyList({ items }: { items: AnomalyItem[] }) {
 
 export function AnomaliesCard() {
   const { data, isLoading, error } = useAnomaliesQuery();
-  const overview: AnomalyOverview | undefined = data;
+  const overview: AnomalyOverview | undefined = data ?? undefined;
 
   const tabItems = [
     {

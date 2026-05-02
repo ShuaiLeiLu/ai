@@ -8,7 +8,7 @@
  */
 import { http } from '@/lib/request/http-client';
 import { ApiResponse, ListResponse } from '@/types/api';
-import { PositionItem, TradeLogItem, TradeRecord, TradingAccount, TradingAllData, TradingPortfolioData, TradingStats } from '@/types/trading';
+import { GenerateTradeReflectionResponse, PositionItem, TradeLogItem, TradeRecord, TradingAccount, TradingAllData, TradingPortfolioData, TradingStats } from '@/types/trading';
 
 const API_BASE = '/trading';
 
@@ -39,6 +39,14 @@ export const getTradingRecords = async (researcherId?: string): Promise<TradeRec
 export const getTradingLogs = async (researcherId?: string): Promise<TradeLogItem[]> => {
   const response = await http<ApiResponse<ListResponse<TradeLogItem>>>(`${API_BASE}/logs${withRid(researcherId)}`);
   return response.data.items;
+};
+
+/** 基于最近成交记录手动生成 AI 复盘 */
+export const generateTradeReflection = async (researcherId: string): Promise<GenerateTradeReflectionResponse> => {
+  const response = await http<ApiResponse<GenerateTradeReflectionResponse>>(`${API_BASE}/logs/reflect${withRid(researcherId)}`, {
+    method: 'POST',
+  });
+  return response.data;
 };
 
 /** 获取历史交易统计（收益曲线、月度收益、风控指标、日收益序列） */

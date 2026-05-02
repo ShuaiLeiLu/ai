@@ -3,28 +3,27 @@
 import { useQuery } from '@tanstack/react-query';
 import {
   getAiDigest,
-  getAnomalies,
-  getHotNews,
-  getIndustryBoards,
-  getLimitUpLadder,
-  getMarketIndicators,
-  getStockRank,
-  getTrends,
+  getPreopenAll,
 } from '@/features/preopen/api';
 
 const PREOPEN_QUERY_KEY = 'preopen';
 
-const realtimeQueryOptions = {
-  staleTime: 60_000,
-  refetchOnWindowFocus: false,
-};
+/**
+ * 聚合查询 —— 一次请求获取盘前速览全量快照数据。
+ * 各子 hook 从聚合数据中提取所需字段，共享同一份缓存。
+ */
+function usePreopenAll() {
+  return useQuery({
+    queryKey: [PREOPEN_QUERY_KEY, 'all'],
+    queryFn: getPreopenAll,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+}
 
 export function useHotNewsQuery() {
-  return useQuery({
-    queryKey: [PREOPEN_QUERY_KEY, 'hot-news'],
-    queryFn: getHotNews,
-    ...realtimeQueryOptions,
-  });
+  const query = usePreopenAll();
+  return { ...query, data: query.data?.hot_news };
 }
 
 export function useAiDigestQuery(enabled = false) {
@@ -38,51 +37,36 @@ export function useAiDigestQuery(enabled = false) {
 }
 
 export function useMarketIndicatorsQuery() {
-  return useQuery({
-    queryKey: [PREOPEN_QUERY_KEY, 'market-indicators'],
-    queryFn: getMarketIndicators,
-    ...realtimeQueryOptions,
-  });
+  const query = usePreopenAll();
+  return { ...query, data: query.data?.market_indicators };
 }
 
 export function useAnomaliesQuery() {
-  return useQuery({
-    queryKey: [PREOPEN_QUERY_KEY, 'anomalies'],
-    queryFn: getAnomalies,
-    ...realtimeQueryOptions,
-  });
+  const query = usePreopenAll();
+  return { ...query, data: query.data?.anomalies };
 }
 
 export function useTrendsQuery() {
-  return useQuery({
-    queryKey: [PREOPEN_QUERY_KEY, 'trends'],
-    queryFn: getTrends,
-    ...realtimeQueryOptions,
-  });
+  const query = usePreopenAll();
+  return { ...query, data: query.data?.trends };
 }
 
 export function useLimitUpLadderQuery() {
-  return useQuery({
-    queryKey: [PREOPEN_QUERY_KEY, 'limit-up-ladder'],
-    queryFn: getLimitUpLadder,
-    ...realtimeQueryOptions,
-  });
+  const query = usePreopenAll();
+  return { ...query, data: query.data?.limit_up_ladder };
 }
 
 /** 行业板块涨跌查询 */
 export function useIndustryBoardsQuery() {
-  return useQuery({
-    queryKey: [PREOPEN_QUERY_KEY, 'industry-boards'],
-    queryFn: getIndustryBoards,
-    ...realtimeQueryOptions,
-  });
+  const query = usePreopenAll();
+  return { ...query, data: query.data?.industry_boards };
 }
 
 /** 涨跌榜查询 */
 export function useStockRankQuery(direction: 'up' | 'down' = 'up') {
-  return useQuery({
-    queryKey: [PREOPEN_QUERY_KEY, 'stock-rank', direction],
-    queryFn: () => getStockRank(direction),
-    ...realtimeQueryOptions,
-  });
+  const query = usePreopenAll();
+  return {
+    ...query,
+    data: direction === 'down' ? query.data?.stock_rank_down : query.data?.stock_rank_up,
+  };
 }

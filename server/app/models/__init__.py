@@ -9,7 +9,8 @@ from app.models.community import Comment, Post
 from app.models.document import Document
 from app.models.ecosystem import KnowledgeBase, McpAuthorization, McpServer, SkillPack
 from app.models.researcher import Researcher, ResearcherHire
-from app.models.trading import Position, TradingAccount, TradeRecord
+from app.models.task import OrchestrationTask, OrchestrationTaskRun, OrchestrationTaskRunLog
+from app.models.trading import Position, TradingAccount, TradingAccountSnapshot, TradeLog, TradeRecord
 from app.models.user import User
 
 __all__ = [
@@ -20,6 +21,10 @@ __all__ = [
     # 研究员
     "Researcher",
     "ResearcherHire",
+    # 任务编排
+    "OrchestrationTask",
+    "OrchestrationTaskRun",
+    "OrchestrationTaskRunLog",
     # 文档
     "Document",
     # 社区
@@ -27,8 +32,10 @@ __all__ = [
     "Comment",
     # 交易
     "TradingAccount",
+    "TradingAccountSnapshot",
     "Position",
     "TradeRecord",
+    "TradeLog",
     # 计费
     "BatteryLedger",
     "MembershipOrder",

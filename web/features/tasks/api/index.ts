@@ -2,10 +2,10 @@ import { http } from '@/lib/request/http-client';
 import { ApiResponse, ListResponse } from '@/types/api';
 import {
   TaskCreatePayload,
+  TaskLifecycleStatus,
   TaskRunLog,
   TaskRunRecord,
   TaskScheduleType,
-  TaskStatus,
   TaskSummary,
   TaskUpdatePayload
 } from '@/types/tasks';
@@ -13,7 +13,7 @@ import {
 const TASKS_API_BASE = '/tasks';
 
 export interface TaskQueryFilters {
-  status?: TaskStatus;
+  status?: TaskLifecycleStatus;
   schedule_type?: TaskScheduleType;
 }
 

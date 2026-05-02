@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import time
+from collections import defaultdict
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -339,6 +340,8 @@ class ResearcherService:
     async def async_list_workbench_hired(
         self, session: AsyncSession, user_id: str
     ) -> list[WorkbenchHiredResearcher]:
+        from app.models.trading import TradingAccount
+
         researcher_options = self._researcher_card_load_options()
         hired_subquery = (
             select(HireModel.researcher_id)
@@ -348,23 +351,43 @@ class ResearcherService:
             )
         )
         stmt = (
-            select(ResearcherModel)
+            select(ResearcherModel, TradingAccount)
+            .outerjoin(
+                TradingAccount,
+                (TradingAccount.researcher_id == ResearcherModel.id)
+                & (TradingAccount.user_id == user_id),
+            )
             .where(
                 (ResearcherModel.is_system.is_(True))
                 | (ResearcherModel.id.in_(hired_subquery))
             )
             .order_by(ResearcherModel.is_system.desc(), ResearcherModel.name.asc())
-            .options(*researcher_options)
+            .options(
+                *researcher_options,
+                Load(TradingAccount).load_only(
+                    TradingAccount.total_asset,
+                    TradingAccount.daily_pnl,
+                ),
+            )
         )
         query_result = await session.execute(stmt)
+        rows = query_result.all()
+        account_ids = [account.id for _, account in rows if account is not None]
+        account_replays = await self._load_account_replays(session, account_ids)
 
         seen_ids: set[str] = set()
         result: list[WorkbenchHiredResearcher] = []
-        for researcher in query_result.scalars().all():
+        for researcher, account in rows:
             if researcher.id in seen_ids:
                 continue
             seen_ids.add(researcher.id)
-            result.append(self._researcher_to_hired_card(researcher))
+            result.append(
+                self._researcher_to_hired_card(
+                    researcher,
+                    account,
+                    replay=account_replays.get(account.id) if account is not None else None,
+                )
+            )
 
         return result
 
@@ -388,7 +411,23 @@ class ResearcherService:
         )
 
     @staticmethod
-    def _researcher_to_hired_card(researcher: ResearcherModel) -> WorkbenchHiredResearcher:
+    def _researcher_to_hired_card(
+        researcher: ResearcherModel,
+        account: object | None = None,
+        replay: object | None = None,
+    ) -> WorkbenchHiredResearcher:
+        daily_pnl: float | None = None
+        today_yield_rate: float | None = None
+        month_yield_rate: float | None = None
+        total_asset: float | None = None
+        if account is not None:
+            metrics = ResearcherService._trading_account_view_metrics(account, replay=replay)
+            total_asset = metrics["total_asset"]
+            daily_pnl = metrics["daily_pnl"]
+            today_start_asset = metrics["today_start_asset"]
+            today_yield_rate = daily_pnl / today_start_asset if today_start_asset > 0 else 0.0
+            month_yield_rate = metrics["month_yield_rate"]
+
         return WorkbenchHiredResearcher(
             researcher_id=researcher.id,
             avatar_url=researcher.avatar_url,
@@ -396,23 +435,94 @@ class ResearcherService:
             summary=researcher.description,
             status=researcher.status,
             tags=list(researcher.tags or []),
-            today_yield=researcher.today_pnl,
-            win_rate_30d=researcher.win_rate_30d,
+            today_yield=daily_pnl,
+            today_yield_rate=today_yield_rate,
+            month_yield_rate=month_yield_rate,
+            total_asset=total_asset,
+            win_rate_30d=None,
+            has_trading_account=account is not None,
             level=researcher.level,
         )
+
+    @staticmethod
+    def _trading_account_view_metrics(
+        account: object,
+        *,
+        replay: object | None = None,
+    ) -> dict[str, float]:
+        from app.modules.trading.schemas import DEFAULT_INITIAL_CAPITAL
+        from app.modules.trading.service import TradingService
+
+        initial_capital = DEFAULT_INITIAL_CAPITAL
+        total_asset = round(float(getattr(account, "total_asset", initial_capital)), 2)
+        daily_pnl = TradingService._derive_recent_pnl(
+            total_asset=total_asset,
+            initial_capital=initial_capital,
+            replay=replay,  # type: ignore[arg-type]
+        )
+        today_start_asset = total_asset - daily_pnl
+        return {
+            "total_asset": total_asset,
+            "daily_pnl": daily_pnl,
+            "today_start_asset": today_start_asset,
+            "today_yield_rate": daily_pnl / today_start_asset if today_start_asset > 0 else 0.0,
+            "month_yield_rate": (total_asset - initial_capital) / initial_capital
+            if initial_capital > 0
+            else 0.0,
+        }
+
+    async def _load_account_replays(
+        self,
+        session: AsyncSession,
+        account_ids: list[str],
+    ) -> dict[str, object]:
+        """批量加载成交并按账户回放，给工作台复用交易详情页的收益口径。"""
+        if not account_ids:
+            return {}
+
+        from app.models.trading import TradeRecord as RecordModel
+        from app.modules.trading.service import TradingService
+
+        unique_ids = sorted(set(account_ids))
+        stmt = (
+            select(RecordModel)
+            .where(RecordModel.account_id.in_(unique_ids))
+            .order_by(RecordModel.account_id.asc(), RecordModel.created_at.asc())
+            .options(
+                load_only(
+                    RecordModel.id,
+                    RecordModel.account_id,
+                    RecordModel.symbol,
+                    RecordModel.name,
+                    RecordModel.side,
+                    RecordModel.quantity,
+                    RecordModel.price,
+                    RecordModel.commission,
+                    RecordModel.created_at,
+                )
+            )
+        )
+        result = await session.execute(stmt)
+        records = list(result.scalars().all())
+        records_by_account: dict[str, list[RecordModel]] = defaultdict(list)
+        for record in records:
+            records_by_account[record.account_id].append(record)
+
+        trading_service = TradingService()
+        return {
+            account_id: trading_service._replay_records(records_by_account.get(account_id, []))
+            for account_id in unique_ids
+        }
 
     async def async_list_public_rankings(
         self, session: AsyncSession, *, sort_by: WorkbenchRankSortBy = "today", limit: int = 20
     ) -> list[WorkbenchPublicRankItem]:
         from app.models.trading import TradingAccount
 
-        order_col = TradingAccount.daily_pnl.desc() if sort_by == "today" else TradingAccount.total_asset.desc()
         stmt = (
             select(ResearcherModel, TradingAccount)
             .join(TradingAccount, TradingAccount.researcher_id == ResearcherModel.id)
             .where(ResearcherModel.visibility == "public")
-            .order_by(order_col)
-            .limit(limit)
             .options(
                 Load(ResearcherModel).load_only(
                     ResearcherModel.id,
@@ -420,26 +530,41 @@ class ResearcherService:
                 ),
                 Load(ResearcherModel).noload(ResearcherModel.hires),
                 Load(ResearcherModel).noload(ResearcherModel.documents),
+                Load(TradingAccount).load_only(
+                    TradingAccount.total_asset,
+                    TradingAccount.daily_pnl,
+                ),
             )
         )
         result = await session.execute(stmt)
+        rows = result.all()
+        account_replays = await self._load_account_replays(
+            session,
+            [account.id for _, account in rows],
+        )
 
         rankings: list[WorkbenchPublicRankItem] = []
-        initial_asset = 1_000_000.0
-        for researcher, account in result.all():
-            total_asset = float(account.total_asset) if account else initial_asset
-            daily_pnl = float(account.daily_pnl) if account else 0.0
+        for researcher, account in rows:
+            metrics = self._trading_account_view_metrics(
+                account,
+                replay=account_replays.get(account.id),
+            )
             rankings.append(
                 WorkbenchPublicRankItem(
                     researcher_id=researcher.id,
                     name=researcher.name,
-                    total_asset=total_asset,
-                    today_yield_rate=daily_pnl / total_asset if total_asset > 0 else 0.0,
-                    month_yield_rate=(total_asset - initial_asset) / initial_asset if initial_asset > 0 else 0.0,
+                    total_asset=metrics["total_asset"],
+                    today_yield_rate=metrics["today_yield_rate"],
+                    month_yield_rate=metrics["month_yield_rate"],
                     risk_note="模拟盘",
                 )
             )
-        return rankings
+
+        if sort_by == "today":
+            rankings.sort(key=lambda item: item.today_yield_rate, reverse=True)
+        else:
+            rankings.sort(key=lambda item: item.month_yield_rate, reverse=True)
+        return rankings[:limit]
 
     async def async_list_workbench_hot_documents(
         self, session: AsyncSession, *, limit: int = 6
@@ -452,7 +577,7 @@ class ResearcherService:
 
         stmt = (
             select(DocModel)
-            .order_by(DocModel.view_count.desc())
+            .order_by(DocModel.created_at.desc())
             .limit(limit)
             .options(
                 load_only(
@@ -488,8 +613,9 @@ class ResearcherService:
                     summary=document.summary,
                     researcher_name=researcher_names.get(document.researcher_id, "未知"),
                     create_time=document.created_at,
-                    view_count=document.view_count,
-                    comment_count=document.comment_count,
+                    view_count=None,
+                    comment_count=None,
+                    metrics_ready=False,
                 )
             )
         return hot_documents
@@ -538,6 +664,10 @@ class ResearcherService:
             return cached[1]
 
         partial_failures: list[str] = []
+
+        # 三个查询共用同一个 session（单连接），无法真正并行；
+        # 若未来需要并行，可为每个查询创建独立 session。
+        # 当前主要性能瓶颈已通过消除排行榜 N+1 replay 解决。
         hired = await self.async_list_workbench_hired(session, user_id)
 
         hot_documents: list[WorkbenchHotDocument] = []

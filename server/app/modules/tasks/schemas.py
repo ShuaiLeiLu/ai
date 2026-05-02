@@ -8,7 +8,21 @@ from pydantic import Field
 from app.schemas.common import SchemaModel
 
 ScheduleType = Literal["one_time", "interval", "cron"]
-TaskStatus = Literal["DRAFT", "ACTIVE", "RUNNING", "SUCCESS", "FAILED", "PAUSED", "DELETED"]
+TaskLifecycleStatus = Literal["DRAFT", "ACTIVE", "PAUSED", "DELETED"]
+TaskRunStatus = Literal["PENDING", "RUNNING", "SUCCESS", "FAILED", "SKIPPED", "CANCELED"]
+# Backward-compatible status type for older frontend code paths.
+TaskStatus = Literal[
+    "DRAFT",
+    "ACTIVE",
+    "RUNNING",
+    "SUCCESS",
+    "FAILED",
+    "PAUSED",
+    "DELETED",
+    "PENDING",
+    "SKIPPED",
+    "CANCELED",
+]
 RunResultType = Literal["none", "document", "message"]
 RunLogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 
@@ -34,10 +48,13 @@ class TaskConfigBase(SchemaModel):
 
 class TaskSummary(TaskConfigBase):
     task_id: str
-    status: TaskStatus
+    status: TaskLifecycleStatus
+    lifecycle_status: TaskLifecycleStatus
     created_at: datetime
     updated_at: datetime
     last_run_at: datetime | None = None
+    last_run_status: TaskRunStatus | None = None
+    next_run_at: datetime | None = None
     dynamic_variable_hints: list[str] = Field(default_factory=lambda: list(DYNAMIC_VARIABLE_HINTS))
 
 
@@ -60,10 +77,11 @@ class TaskRunRecord(SchemaModel):
     run_id: str
     task_id: str
     trigger_time: datetime
-    start_time: datetime
+    start_time: datetime | None = None
     end_time: datetime | None = None
-    status: TaskStatus
+    status: TaskRunStatus
     result_type: RunResultType = "none"
+    result_document_id: str | None = None
     error_message: str | None = None
 
 

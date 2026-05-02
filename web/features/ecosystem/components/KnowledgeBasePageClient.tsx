@@ -1,7 +1,7 @@
 /**
  * 我的知识库页面
  *
- * 属于“赛博实验室”子页面之一，路由：/workstation/knowledge-base
+ * 属于“极睿实验室”子页面之一，路由：/workstation/knowledge-base
  * - 空态：虚线框 + “创建知识库” 按钮
  * - 有数据：Ant Design Table 展示知识库列表（名称 / 文档数 / 更新时间）
  *

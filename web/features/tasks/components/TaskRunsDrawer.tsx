@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, Drawer, Empty, List, Skeleton, Tag } from 'antd';
+import { Button, Drawer, Empty, List, Skeleton, Space, Tag } from 'antd';
 
 import { useGetTaskRunsByTask } from '@/features/tasks/hooks';
 import { TaskRunRecord, TaskSummary } from '@/types/tasks';
@@ -18,6 +18,14 @@ function formatDate(value: string | null): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString('zh-CN');
+}
+
+function runStatusColor(status: TaskRunRecord['status']): string {
+  if (status === 'FAILED') return 'error';
+  if (status === 'SUCCESS') return 'success';
+  if (status === 'SKIPPED') return 'warning';
+  if (status === 'RUNNING') return 'processing';
+  return 'default';
 }
 
 export function TaskRunsDrawer({ open, onClose, task }: TaskRunsDrawerProps) {
@@ -47,15 +55,20 @@ export function TaskRunsDrawer({ open, onClose, task }: TaskRunsDrawerProps) {
             renderItem={(run: TaskRunRecord) => (
               <List.Item
                 actions={[
+                  run.result_document_id ? (
+                    <Button key="document" size="small" href={`/workstation/documents?document_id=${run.result_document_id}`}>
+                      查看文档
+                    </Button>
+                  ) : null,
                   <Button key={run.run_id} size="small" onClick={() => setSelectedRunId(run.run_id)}>
                     查看日志
                   </Button>
-                ]}
+                ].filter(Boolean)}
               >
                 <List.Item.Meta
                   title={
                     <div className="flex items-center gap-2">
-                      <Tag color={run.status === 'FAILED' ? 'error' : 'blue'}>{run.status}</Tag>
+                      <Tag color={runStatusColor(run.status)}>{run.status}</Tag>
                       <span>{run.run_id}</span>
                     </div>
                   }
@@ -65,7 +78,18 @@ export function TaskRunsDrawer({ open, onClose, task }: TaskRunsDrawerProps) {
                       <div>开始：{formatDate(run.start_time)}</div>
                       <div>结束：{formatDate(run.end_time)}</div>
                       <div>输出类型：{run.result_type}</div>
-                      {run.error_message ? <div className="text-rose-500">错误：{run.error_message}</div> : null}
+                      {run.result_document_id ? (
+                        <Space size={6}>
+                          <span>结果文档：</span>
+                          <Button type="link" size="small" href={`/workstation/documents?document_id=${run.result_document_id}`}>
+                            {run.result_document_id}
+                          </Button>
+                        </Space>
+                      ) : null}
+                      {run.status === 'SKIPPED' ? <div className="text-amber-600">跳过：{run.error_message}</div> : null}
+                      {run.status === 'FAILED' && run.error_message ? (
+                        <div className="text-rose-500">失败摘要：{run.error_message}</div>
+                      ) : null}
                     </div>
                   }
                 />

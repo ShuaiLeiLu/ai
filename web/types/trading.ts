@@ -96,11 +96,22 @@ export interface TradingPortfolioData {
 }
 
 /** 交易日志条目（trade 表格 / analysis 富文本） */
+export interface TradeLogSection {
+  key: 'trade_review' | 'execution_reflection' | 'next_day_outlook' | string;
+  title: string;
+  content: string;
+}
+
 export interface TradeLogItem {
   log_id: string;
   log_type: 'trade' | 'analysis';
   trade_records: TradeRecord[];
   title: string;
   content: string;           // Markdown
+  sections?: TradeLogSection[];
   created_at: string;
+}
+
+export interface GenerateTradeReflectionResponse {
+  log: TradeLogItem;
 }

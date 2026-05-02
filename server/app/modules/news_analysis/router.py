@@ -77,16 +77,14 @@ async def news_analysis_all() -> ApiResponse[NewsAnalysisAllData]:
     if _all_cache["data"] is not None and now < _all_cache["expires_at"]:
         return ApiResponse(data=_all_cache["data"])
 
-    feed_items, ai_panels_items, hot_stocks_items, hot_news_items = await asyncio.gather(
+    feed_items, hot_stocks_items, hot_news_items = await asyncio.gather(
         run_sync(service.list_feed),
-        service.generate_ai_panels_with_llm(),
         run_sync(service.list_hot_stocks),
         run_sync(service.list_hot_news),
     )
 
     data = NewsAnalysisAllData(
         feed=feed_items,
-        ai_panels=ai_panels_items,
         hot_stocks=hot_stocks_items,
         hot_news=hot_news_items,
     )

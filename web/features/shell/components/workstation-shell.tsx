@@ -102,19 +102,18 @@ export function WorkstationShell({ children }: PropsWithChildren) {
   // 移动端抽屉状态
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  // 用户会话
+  // 用户会话：首屏保持 SSR/CSR 一致，挂载后再从 localStorage 恢复。
   const accessToken = useUserSessionStore((s) => s.accessToken);
   const user = useUserSessionStore((s) => s.user);
   const hydrated = useUserSessionStore((s) => s.hydrated);
-  const hydrate = useUserSessionStore((s) => s.hydrate);
   const logout = useUserSessionStore((s) => s.logout);
+  const hydrate = useUserSessionStore((s) => s.hydrate);
 
-  // 应用启动时从 localStorage 恢复登录态
   useEffect(() => {
-    if (!hydrated) hydrate();
-  }, [hydrated, hydrate]);
+    hydrate();
+  }, [hydrate]);
 
-  // 登录态恢复完成后，若仍无 token，直接回登录页。
+  // 登录态确认后，若无 token，跳登录页
   useEffect(() => {
     if (!hydrated) return;
     if (accessToken) return;
@@ -128,6 +127,7 @@ export function WorkstationShell({ children }: PropsWithChildren) {
 
   const selectedKeys = findSelectedKeys(pathname, workstationNav);
   const defaultOpenKeys = findOpenKeys(pathname, workstationNav);
+  const unreadNotificationCount = 0;
 
   /** 头像下拉菜单 */
   const avatarMenuItems: MenuProps['items'] = user
@@ -304,38 +304,51 @@ export function WorkstationShell({ children }: PropsWithChildren) {
           </Space>
 
           {/* 右侧工具区 */}
-          <div className="flex flex-1 items-center justify-end gap-3 sm:gap-5">
-            <div className="hidden sm:flex items-center gap-1 rounded-full bg-slate-50 px-2 py-1 border border-slate-100">
-              <SearchOutlined className="text-slate-400 text-xs ml-1" />
-              <span className="text-xs text-slate-400 mr-2 cursor-pointer">搜索功能...</span>
-            </div>
-            
-            <Badge dot offset={[-2, 4]} color="#7c3aed">
-              <Button type="text" icon={<BellOutlined />} className="!text-slate-500 hover:!bg-slate-50" />
-            </Badge>
+          <div className="flex flex-1 items-center justify-end gap-5">
+            {/* 极简搜索按钮 */}
+            <Button
+              type="text"
+              icon={<SearchOutlined />}
+              className="!text-slate-400 hover:!text-brand-500"
+            />
 
-            {/* VIP 徽章 */}
-            <Link href={routes.billing} className="hidden xs:block">
-              <div className="flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1 border border-amber-100 cursor-pointer hover:bg-amber-100 transition-all">
-                <CrownOutlined className="text-amber-600 text-xs" />
-                <span className="text-xs font-semibold text-amber-700 hidden sm:inline">
-                  {user ? user.membership_level : '开通VIP'}
-                </span>
-              </div>
-            </Link>
+            <div className="flex items-center gap-4">
+              <Badge dot={unreadNotificationCount > 0} offset={[-2, 4]} color="#7c3aed">
+                <Button type="text" icon={<BellOutlined />} className="!text-slate-400 hover:!text-brand-500" />
+              </Badge>
 
-            <div className="h-4 w-[1px] bg-slate-100 hidden sm:block mx-1" />
-
-            <Dropdown menu={{ items: avatarMenuItems }} trigger={['click']} placement="bottomRight">
-              <div className="flex items-center gap-2 cursor-pointer group">
-                <Avatar size={32} icon={<UserOutlined />} className="bg-brand-500 shadow-md shadow-brand-500/10 group-hover:scale-105 transition-transform" />
-                <div className="hidden xl:flex flex-col leading-tight">
-                  <span className="text-xs font-semibold text-slate-700 line-clamp-1">{user?.nickname || '未登录'}</span>
-                  <span className="text-[10px] text-slate-400 flex items-center gap-0.5">
-                    <ThunderboltOutlined className="text-amber-500 scale-75" />
-                    {user?.battery_balance ?? 0}
+              {/* VIP - 极简文字版 */}
+              <Link href={routes.billing} className="group">
+                <div className="flex items-center gap-1.5 transition-colors">
+                  <CrownOutlined className="text-amber-500 text-xs" />
+                  <span className="text-xs font-semibold text-slate-500 group-hover:text-amber-600">
+                    {user ? user.membership_level : '开通VIP'}
                   </span>
                 </div>
+              </Link>
+
+              {/* 电池 - 极简文字版 */}
+              <div className="flex items-center gap-1.5">
+                <ThunderboltOutlined className="text-amber-500 text-xs" />
+                <span className="text-xs font-bold text-slate-500 tabular-nums">{user?.battery_balance ?? 0}</span>
+              </div>
+            </div>
+
+            <div className="h-4 w-[1px] bg-slate-200" />
+
+            {/* 用户中心 - 纯净头像 */}
+            <Dropdown menu={{ items: avatarMenuItems }} trigger={['click']} placement="bottomRight">
+              <div className="flex items-center gap-3 cursor-pointer group">
+                <div className="hidden sm:block text-right">
+                  <div className="text-[13px] font-semibold text-slate-700 group-hover:text-brand-500 transition-colors">
+                    {user?.nickname || '未登录'}
+                  </div>
+                </div>
+                <Avatar
+                  size={32}
+                  icon={<UserOutlined />}
+                  className="bg-slate-100 !text-slate-400 border border-slate-200 group-hover:border-brand-200 transition-all"
+                />
               </div>
             </Dropdown>
           </div>

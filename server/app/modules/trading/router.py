@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_optional_session
 from app.core.security import get_current_user_id
 from app.modules.trading.schemas import (
+    GenerateTradeReflectionResponse,
     PlaceOrderRequest,
     PlaceOrderResponse,
     PositionItem,
@@ -162,6 +163,27 @@ async def list_trade_logs(
     account_id = await service.async_resolve_account_id(session, user_id, researcher_id)
     items = await service.async_list_logs(session, account_id, limit=200)
     return ApiResponse(data=ListResponse(items=items, total=len(items)))
+
+
+@router.post("/logs/reflect")
+async def generate_trade_reflection(
+    researcher_id: str = Query(default="", description="研究员ID"),
+    user_id: str = Depends(get_current_user_id),
+    session: AsyncSession | None = Depends(get_optional_session),
+) -> ApiResponse[GenerateTradeReflectionResponse]:
+    """基于最近一笔真实成交日志，手动生成并保存 AI 交易复盘。"""
+    if not session:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="数据库不可用")
+    if not researcher_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="researcher_id 缺失")
+    account_model = await service.async_resolve_account_model(session, user_id, researcher_id)
+    researcher = await service._load_researcher_model(session, researcher_id)
+    log = await service.async_generate_reflection_for_latest_trade(
+        session,
+        account=account_model,
+        researcher=researcher,
+    )
+    return ApiResponse(data=GenerateTradeReflectionResponse(log=log))
 
 
 @router.get("/stats")

@@ -10,16 +10,20 @@
  * 数据流：
  *  - useWorkbenchOverview() 首屏聚合数据：已雇佣研究员、热门文档、公开排行榜
  *  - useTradingPortfolio()  模拟账户轻量快照
+ *  - useTradingLogsWhenEnabled() 研究员详情工作日志
  */
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import {
   Badge,
   Button,
   Empty,
+  Col,
+  message,
+  Row,
   Segmented,
   Skeleton,
   Tag,
@@ -29,19 +33,19 @@ import {
 import {
   AppstoreOutlined,
   ClockCircleOutlined,
-  EyeOutlined,
   FileTextOutlined,
   MessageOutlined,
-  PlusOutlined,
   RightOutlined,
   SettingOutlined,
 } from '@ant-design/icons';
 
+import { PageCard } from '@/components/ui/page-card';
 import { useWorkbenchOverview } from '@/features/researcher-workbench/hooks';
-import { useTradingPortfolio } from '@/features/trading/hooks';
+import { useGenerateTradeReflection, useTradingLogsWhenEnabled, useTradingPortfolio } from '@/features/trading/hooks';
 import { routes } from '@/lib/constants/routes';
 import { useUserSessionStore } from '@/stores/user-session.store';
 import type { HiredResearcher, HotDocument, PublicRankItem, RankSortBy } from '@/types/researcher-workbench';
+import type { TradeLogItem, TradeLogSection } from '@/types/trading';
 
 // ──────────── 常量与工具函数 ────────────
 
@@ -98,11 +102,6 @@ function formatMoney(value: number) {
   return value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-/** 格式化资产数字，保留整数并加千分位 */
-function formatAsset(value: number) {
-  return Math.round(value).toLocaleString('zh-CN');
-}
-
 /** ISO 时间字符串 → "YYYY-MM-DD" */
 function formatDate(value: string) {
   const d = new Date(value);
@@ -120,6 +119,51 @@ function timeAgo(value: string) {
   if (diffHr < 24) return `${diffHr}小时前`;
   const diffDay = Math.floor(diffHr / 24);
   return `${diffDay}天前`;
+}
+
+const WORK_LOG_SECTION_TITLES = ['交易复盘', '执行反思', '次日展望'];
+
+function stripMarkdown(value: string) {
+  return value
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^\s*[-*]\s+/gm, '')
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .trim();
+}
+
+function parseWorkLogSections(content: string): TradeLogSection[] {
+  const lines = content.trim().split(/\r?\n/);
+  const sections = new Map<string, string[]>();
+  let currentTitle: string | null = null;
+
+  for (const line of lines) {
+    const heading = line.trim().match(/^##\s+(.+)$/);
+    if (heading) {
+      const title = heading[1].trim();
+      currentTitle = WORK_LOG_SECTION_TITLES.includes(title) ? title : null;
+      if (currentTitle && !sections.has(currentTitle)) sections.set(currentTitle, []);
+      continue;
+    }
+    if (currentTitle) {
+      sections.get(currentTitle)?.push(line);
+    }
+  }
+
+  return WORK_LOG_SECTION_TITLES.map((title) => ({
+    key: title,
+    title,
+    content: stripMarkdown((sections.get(title) ?? []).join('\n')),
+  })).filter((section) => section.content.length > 0);
+}
+
+function getWorkLogSections(log: TradeLogItem): TradeLogSection[] {
+  const structured = (log.sections ?? [])
+    .filter((section) => WORK_LOG_SECTION_TITLES.includes(section.title) && section.content.trim())
+    .map((section) => ({ ...section, content: stripMarkdown(section.content) }));
+  if (structured.length > 0) return structured;
+
+  return parseWorkLogSections(log.content);
 }
 
 // ──────────── 左侧面板 ────────────
@@ -237,20 +281,18 @@ function ResearcherCardsSection({
   loading: boolean;
   onSelect: (id: string) => void;
 }) {
+  const extra = (
+    <Link href={routes.labTalentMarket} className="text-sm text-brand-500 hover:text-brand-600">
+      扩充团队 <RightOutlined className="text-xs" />
+    </Link>
+  );
+
   return (
-    <div className="rounded-lg border border-slate-100 bg-white p-4">
-      <div className="mb-4 flex items-center justify-between">
-        <div>
-          <Typography.Title level={5} className="!mb-1 !text-lg">研究员卡片</Typography.Title>
-          <div className="text-sm text-slate-400">快速进入研究员工作区，查看制品、模拟盘和任务状态</div>
-        </div>
-        <Link href={routes.labTalentMarket} className="flex items-center gap-1 text-sm text-amber-500 hover:text-amber-600">
-          扩充团队 <RightOutlined style={{ fontSize: 11 }} />
-        </Link>
-      </div>
+    <PageCard title="研究员卡片" extra={extra}>
+      <div className="mb-4 text-sm text-slate-400">快速进入研究员工作区，查看制品、模拟盘和任务状态</div>
 
       {loading ? (
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
           {[1, 2, 3].map((i) => (
             <div key={i} className="rounded-xl border border-slate-100 p-4">
               <Skeleton avatar active paragraph={{ rows: 4 }} />
@@ -262,13 +304,13 @@ function ResearcherCardsSection({
           <Empty description="暂无研究员" image={Empty.PRESENTED_IMAGE_SIMPLE} />
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
           {researchers.map((r) => (
             <button
               key={r.researcher_id}
               type="button"
               onClick={() => onSelect(r.researcher_id)}
-              className="group rounded-xl border border-slate-100 bg-gradient-to-br from-white to-slate-50 p-4 text-left transition-all hover:-translate-y-0.5 hover:border-amber-200 hover:shadow-md"
+              className="group rounded-xl border border-slate-100 bg-white p-4 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:border-brand-200 hover:shadow-md"
             >
               <div className="mb-4 flex items-start justify-between gap-3">
                 <div className="flex items-center gap-3">
@@ -278,7 +320,9 @@ function ResearcherCardsSection({
                   <div>
                     <div className="flex items-center gap-2">
                       <span className="text-base font-bold text-slate-800">{r.name}</span>
-                      <span className="rounded-full bg-amber-400 px-2 py-0.5 text-xs font-medium text-white">{r.level || 'LV.2'}</span>
+                      {r.level && (
+                        <span className="rounded-full bg-amber-400 px-2 py-0.5 text-xs font-medium text-white">{r.level}</span>
+                      )}
                     </div>
                     <div className="mt-1 flex items-center gap-1.5 text-xs text-slate-400">
                       <Badge status={r.status === 'active' ? 'processing' : 'default'} />
@@ -304,22 +348,30 @@ function ResearcherCardsSection({
               <div className="mt-4 grid grid-cols-2 gap-3 border-t border-slate-100 pt-4">
                 <div>
                   <div className="text-xs text-slate-400">今日盈亏</div>
-                  <div className={`mt-1 text-lg font-black ${yieldColor(r.today_yield)}`}>
-                    {r.today_yield > 0 ? '+' : ''}{formatMoney(r.today_yield)}
-                  </div>
+                  {r.has_trading_account && r.today_yield !== null ? (
+                    <div className={`mt-1 text-lg font-black ${yieldColor(r.today_yield)}`}>
+                      {r.today_yield > 0 ? '+' : ''}{formatMoney(r.today_yield)}
+                    </div>
+                  ) : (
+                    <div className="mt-1 text-sm font-medium text-slate-400">暂无模拟盘</div>
+                  )}
                 </div>
                 <div>
-                  <div className="text-xs text-slate-400">30日胜率</div>
-                  <div className="mt-1 text-lg font-black text-slate-800">
-                    {formatPct(r.win_rate_30d)}
-                  </div>
+                  <div className="text-xs text-slate-400">今日收益率</div>
+                  {r.has_trading_account && r.today_yield_rate !== null ? (
+                    <div className={`mt-1 text-lg font-black ${yieldColor(r.today_yield_rate)}`}>
+                      {formatPct(r.today_yield_rate)}
+                    </div>
+                  ) : (
+                    <div className="mt-1 text-sm font-medium text-slate-400">未产生交易</div>
+                  )}
                 </div>
               </div>
             </button>
           ))}
         </div>
       )}
-    </div>
+    </PageCard>
   );
 }
 
@@ -330,14 +382,14 @@ function HotDocumentsSection({
   documents: HotDocument[];
   loading: boolean;
 }) {
+  const extra = (
+    <Link href={routes.documents} className="text-sm text-brand-500 hover:text-brand-600">
+      查看全部 <RightOutlined className="text-xs" />
+    </Link>
+  );
+
   return (
-    <div className="rounded-lg border border-slate-100 bg-white p-4">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <Typography.Title level={5} className="!mb-0 !text-lg">24小时内热门文档</Typography.Title>
-        <Link href={routes.documents} className="flex items-center gap-1 text-sm text-amber-500 hover:text-amber-600">
-          查看全部 <RightOutlined style={{ fontSize: 11 }} />
-        </Link>
-      </div>
+    <PageCard title="24小时内热门文档" extra={extra}>
       {loading ? (
         <div className="flex gap-4 overflow-hidden">
           {[1, 2, 3, 4].map((i) => (
@@ -372,7 +424,7 @@ function HotDocumentsSection({
                 <div className="mt-3 border-t border-white/70 pt-3 text-sm text-slate-400">
                   <div className="flex items-center justify-between">
                     <span className="truncate">{doc.researcher_name}</span>
-                    <span className="flex items-center gap-1"><EyeOutlined />{doc.view_count}</span>
+                    <span>{timeAgo(doc.create_time)}</span>
                   </div>
                 </div>
               </div>
@@ -380,33 +432,33 @@ function HotDocumentsSection({
           })}
         </div>
       )}
-    </div>
+    </PageCard>
   );
 }
 
 /** 排行榜单行 */
-function RankRow({ item, sortBy, rank }: { item: PublicRankItem; sortBy: RankSortBy; rank: number }) {
-  const yieldRate = sortBy === 'today' ? item.today_yield_rate : item.month_yield_rate;
-  const subRate = sortBy === 'today' ? item.month_yield_rate : item.today_yield_rate;
+function RankRow({ item, rank }: { item: PublicRankItem; rank: number }) {
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-slate-100 bg-white px-3.5 py-3 transition-colors hover:bg-slate-50">
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-100 bg-slate-50 text-sm font-bold text-slate-400">
+    <div className="grid grid-cols-[40px_minmax(0,1fr)] gap-3 rounded-lg border border-slate-100 bg-white px-3.5 py-3 transition-colors hover:bg-slate-50 sm:grid-cols-[40px_minmax(0,1fr)_auto]">
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center self-center rounded-full border border-slate-100 bg-slate-50 text-sm font-bold text-slate-400">
         {rank}
       </div>
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <div className={`h-7 w-7 overflow-hidden rounded-full ${getAvatarBg(item.name)}`}>
             <Image src={getAvatarSrc(item.name)} alt={item.name} width={28} height={28} className="h-full w-full object-cover" />
           </div>
           <span className="truncate text-sm font-semibold text-slate-700">{item.name}</span>
           <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-500">{item.risk_note}</span>
         </div>
-        <div className="mt-1 flex items-center gap-2 text-xs">
-          <span className={yieldColor(yieldRate)}>今日 {formatPct(yieldRate)}</span>
-          <span className={yieldColor(subRate)}>本月 {formatPct(subRate)}</span>
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+          <span className={yieldColor(item.today_yield_rate)}>今日 {formatPct(item.today_yield_rate)}</span>
+          <span className={yieldColor(item.month_yield_rate)}>本月 {formatPct(item.month_yield_rate)}</span>
         </div>
       </div>
-      <div className="shrink-0 text-right text-sm font-semibold text-slate-500">{formatWan(item.total_asset)}</div>
+      <div className="col-span-2 text-left text-sm font-semibold text-slate-500 sm:col-span-1 sm:self-center sm:text-right">
+        {formatWan(item.total_asset)}
+      </div>
     </div>
   );
 }
@@ -424,13 +476,14 @@ function RankingSection({
   onSortChange: (value: RankSortBy) => void;
 }) {
   return (
-    <div className="rounded-lg border border-slate-100 bg-white p-4">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-3">
-          <Typography.Title level={5} className="!mb-0 !text-lg">模拟交易排名</Typography.Title>
-          <span className="text-sm text-slate-400">公开研究员</span>
-        </div>
-        <div className="flex items-center gap-2">
+    <PageCard
+      title={
+        <span className="inline-flex items-center gap-2">
+          模拟交易排名
+          <span className="text-xs font-normal text-slate-400">公开研究员</span>
+        </span>
+      }
+      extra={
           <Segmented
             size="small"
             value={sortBy}
@@ -440,20 +493,20 @@ function RankingSection({
             ]}
             onChange={(v) => onSortChange(v as RankSortBy)}
           />
-        </div>
-      </div>
+      }
+    >
       {loading ? (
         <Skeleton active paragraph={{ rows: 5 }} />
       ) : rankings.length === 0 ? (
         <Empty description="暂无排名数据" image={Empty.PRESENTED_IMAGE_SIMPLE} />
       ) : (
-        <div className={`grid grid-cols-1 gap-3 ${rankings.length > 1 ? 'lg:grid-cols-2' : ''}`}>
+        <div className="grid grid-cols-1 gap-3">
           {rankings.map((item, index) => (
-            <RankRow key={item.researcher_id} item={item} sortBy={sortBy} rank={index + 1} />
+            <RankRow key={item.researcher_id} item={item} rank={index + 1} />
           ))}
         </div>
       )}
-    </div>
+    </PageCard>
   );
 }
 
@@ -518,8 +571,8 @@ function LatestDocuments({
               </div>
               <div className="flex items-center justify-between text-xs text-slate-400">
               <span className="flex items-center gap-2">
-                <span className="flex items-center gap-0.5"><EyeOutlined /> {doc.view_count}</span>
-                <span className="flex items-center gap-0.5"><MessageOutlined /> {doc.comment_count}</span>
+                <span>{doc.metrics_ready && doc.view_count !== null ? `浏览 ${doc.view_count}` : '暂无真实浏览'}</span>
+                <span>{doc.metrics_ready && doc.comment_count !== null ? `评论 ${doc.comment_count}` : '暂无真实评论'}</span>
               </span>
                 <span>{timeAgo(doc.create_time)}</span>
               </div>
@@ -577,79 +630,81 @@ function PortfolioSection({ researcher }: { researcher: HiredResearcher }) {
 
       {/* 数据态 —— 对标目标站：左侧账户指标 + 中间持仓表 + 右侧成长/致谢卡 */}
       {!loading && acct && (
-        <div className="grid grid-cols-1 gap-3 xl:grid-cols-[180px_minmax(480px,1fr)_200px_200px]">
-          {/* ── 左侧：账户概览（紧凑布局） ── */}
-          <div className="space-y-3">
-            {/* 总资产 */}
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[200px_1fr]">
+          {/* ── 左侧：账户概览 ── */}
+          <div className="space-y-4 border-r border-slate-50 pr-4">
             <div>
-              <div className="text-xs text-slate-400 mb-0.5">总资产</div>
+              <div className="text-xs text-slate-400 mb-1">总资产</div>
               <div className="text-2xl font-bold text-slate-800 tracking-tight">
                 {formatWan(acct.total_asset)}
               </div>
             </div>
 
-            {/* 今日盈亏 + 今日收益率（折行显示） */}
-            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-              <span className="text-xs text-slate-400">今日盈亏</span>
-              <span className={`text-base font-bold ${yieldColor(todayPnl)}`}>
-                {todayPnl > 0 ? '+' : ''}{formatMoney(todayPnl)}
-              </span>
-              <span className="text-xs text-slate-400">今日收益率</span>
-              <span className={`text-sm font-semibold ${yieldColor(todayPnlPct)}`}>
-                {formatPct(todayPnlPct)}
-              </span>
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-400">今日盈亏</span>
+                <span className={`font-bold ${yieldColor(todayPnl)}`}>
+                  {todayPnl > 0 ? '+' : ''}{formatMoney(todayPnl)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-slate-400">今日收益率</span>
+                <span className={`font-bold ${yieldColor(todayPnlPct)}`}>
+                  {formatPct(todayPnlPct)}
+                </span>
+              </div>
             </div>
 
-            {/* 持仓资金 / 可用资金 */}
-            <div className="flex gap-2">
-              <div className="flex-1 rounded-lg bg-slate-50 px-2.5 py-2">
-                <div className="text-xs text-slate-400 mb-0.5">持仓资金</div>
+            <div className="space-y-2 pt-2">
+              <div className="rounded-lg bg-slate-50 px-3 py-2">
+                <div className="text-[10px] uppercase tracking-wider text-slate-400 mb-0.5">持仓资金</div>
                 <div className="text-sm font-bold text-slate-700">{formatWan(acct.holding_value)}</div>
               </div>
-              <div className="flex-1 rounded-lg bg-slate-50 px-2.5 py-2">
-                <div className="text-xs text-slate-400 mb-0.5">可用资金</div>
+              <div className="rounded-lg bg-brand-50 px-3 py-2 border border-brand-100/50">
+                <div className="text-[10px] uppercase tracking-wider text-brand-400 mb-0.5">可用资金</div>
                 <div className="text-sm font-bold text-brand-600">{formatWan(acct.available_cash)}</div>
               </div>
             </div>
           </div>
 
-          {/* ── 右侧：持仓表格（最多显示5行，超出滚动） ── */}
+          {/* ── 右侧：持仓表格 ── */}
           <div className="min-w-0">
-            <div className="max-h-[190px] overflow-x-auto overflow-y-auto">
+            <div className="max-h-[220px] overflow-x-auto overflow-y-auto pr-1">
               <table className="w-full text-sm">
                 <thead className="sticky top-0 bg-white z-10">
                   <tr className="border-b border-slate-100 text-left text-xs text-slate-400">
-                    <th className="px-2 py-2 font-medium">股票</th>
-                    <th className="px-2 py-2 font-medium text-right">数量</th>
-                    <th className="px-2 py-2 font-medium text-right">成本价</th>
-                    <th className="px-2 py-2 font-medium text-right">现价</th>
-                    <th className="px-2 py-2 font-medium text-right">盈亏</th>
-                    <th className="px-2 py-2 font-medium text-right">盈亏%</th>
+                    <th className="px-2 py-2.5 font-medium">股票</th>
+                    <th className="px-2 py-2.5 font-medium text-right">数量</th>
+                    <th className="px-2 py-2.5 font-medium text-right">成本/现价</th>
+                    <th className="px-2 py-2.5 font-medium text-right">当日盈亏</th>
+                    <th className="px-2 py-2.5 font-medium text-right">累计盈亏%</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-slate-50">
                   {positions.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="py-6 text-center text-sm text-slate-400">
+                      <td colSpan={5} className="py-12 text-center text-sm text-slate-400 italic">
                         暂无持仓 — 策略待执行或尚未开盘
                       </td>
                     </tr>
                   ) : positions.map((p) => (
-                    <tr key={p.symbol} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
-                      <td className="px-2 py-2">
-                        <div className="font-medium text-slate-800">{p.name}</div>
-                        <div className="text-xs text-slate-400">{p.symbol}</div>
+                    <tr key={p.symbol} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="px-2 py-3">
+                        <div className="font-semibold text-slate-800">{p.name}</div>
+                        <div className="text-[11px] font-mono text-slate-400">{p.symbol}</div>
                       </td>
-                      <td className="px-2 py-2 text-right text-slate-600">{p.quantity}</td>
-                      <td className="px-2 py-2 text-right text-slate-600">{p.cost_price.toFixed(2)}</td>
-                      <td className="px-2 py-2 text-right text-slate-600">{p.current_price.toFixed(2)}</td>
-                      <td className="px-2 py-2 text-right">
-                        <div className={`font-semibold ${yieldColor(p.pnl)}`}>
+                      <td className="px-2 py-3 text-right font-medium text-slate-600">{p.quantity}</td>
+                      <td className="px-2 py-3 text-right">
+                        <div className="text-slate-600 font-medium">{p.cost_price.toFixed(2)}</div>
+                        <div className="text-[11px] text-slate-400">{p.current_price.toFixed(2)}</div>
+                      </td>
+                      <td className="px-2 py-3 text-right">
+                        <div className={`font-bold ${yieldColor(p.pnl)}`}>
                           {p.pnl > 0 ? '+' : ''}{p.pnl.toFixed(2)}
                         </div>
                       </td>
-                      <td className="px-2 py-2 text-right">
-                        <div className={`text-xs font-semibold ${yieldColor(p.pnl)}`}>
+                      <td className="px-2 py-3 text-right">
+                        <div className={`inline-flex rounded px-1.5 py-0.5 text-xs font-bold ${p.pnl >= 0 ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>
                           {p.cost_price > 0
                             ? `${((p.current_price - p.cost_price) / p.cost_price * 100).toFixed(2)}%`
                             : '-'}
@@ -661,26 +716,6 @@ function PortfolioSection({ researcher }: { researcher: HiredResearcher }) {
               </table>
             </div>
           </div>
-
-          <div className="rounded-lg border border-cyan-200 bg-cyan-50 p-3">
-            <div className="mb-2 flex items-center justify-between text-xs text-cyan-700">
-              <span>成长Token余量</span>
-              <span className="rounded-full border border-cyan-200 px-1.5">?</span>
-            </div>
-            <div className="text-2xl font-black text-cyan-600">981.8K</div>
-            <div className="mt-1 text-xs text-slate-400">累计接收 78743.2K　已消耗 77761.4K</div>
-            <button className="mt-8 w-full rounded-md bg-cyan-100 py-1.5 text-xs font-medium text-cyan-700 transition-colors hover:bg-cyan-200" type="button">
-              捐赠
-            </button>
-          </div>
-
-          <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
-            <div className="mb-2 flex items-center justify-between text-xs text-amber-600">
-              <span>致谢榜Top5</span>
-              <span className="text-xs text-slate-300">今日捐赠</span>
-            </div>
-            <div className="flex h-[110px] items-center justify-center text-xs text-slate-300">暂无捐赠</div>
-          </div>
         </div>
       )}
     </div>
@@ -688,35 +723,89 @@ function PortfolioSection({ researcher }: { researcher: HiredResearcher }) {
 }
 
 /** 工作日志时间线 */
-function WorkLogSection() {
-  const logs = [
-    { time: '2026-04-18 09:31:25', type: '任务执行', content: '今天是新的交易日, 需要全面分析市场情况, 判断大盘走势, 挖掘投资机会并给出具体的建议. 重点关注板块轮动和市场热点' },
-    { time: '2026-04-17 15:02:10', type: '定时任务', content: '收盘后复盘涨停梯队与炸板数据, 需要对今日市场情绪进行评分, 并给出明日预期和仓位建议.' },
-    { time: '2026-04-17 09:30:00', type: '盘前策略', content: '盘前检查行业强弱, 结合北向资金流向与竞价强度, 确认今日操作策略方向.' },
-  ];
+function WorkLogSection({ researcherId }: { researcherId: string }) {
+  const logsQuery = useTradingLogsWhenEnabled(researcherId);
+  const generateReflection = useGenerateTradeReflection();
+  const tradeLogCount = (logsQuery.data ?? []).filter((log) => log.log_type === 'trade').length;
+  const reviewLogs = useMemo(() => {
+    return (logsQuery.data ?? [])
+      .filter((log) => log.log_type === 'analysis')
+      .map((log) => ({ log, sections: getWorkLogSections(log) }))
+      .filter((item) => item.sections.length > 0)
+      .sort((a, b) => new Date(b.log.created_at).getTime() - new Date(a.log.created_at).getTime())
+      .slice(0, 6);
+  }, [logsQuery.data]);
 
   return (
     <div className="rounded-lg border border-slate-100 bg-white p-3">
       <div className="mb-3 flex items-center justify-between">
         <Typography.Title level={5} className="!mb-0 !text-sm text-amber-600">工作日志</Typography.Title>
-        <Link href="#" className="flex items-center gap-0.5 text-xs text-amber-500 hover:text-amber-600">
+        <Link href={routes.tradingDetail(researcherId)} className="flex items-center gap-0.5 text-xs text-amber-500 hover:text-amber-600">
           查看详情 <RightOutlined style={{ fontSize: 10 }} />
         </Link>
       </div>
-      <Timeline
-        items={logs.map((log) => ({
-          dot: <ClockCircleOutlined className="text-brand-500" />,
-          children: (
-            <div>
-              <div className="flex items-center gap-2 text-xs text-slate-400">
-                <span>{log.time}</span>
-                <Tag className="!text-xs !px-1.5 !py-0">{log.type}</Tag>
+      {logsQuery.isLoading && (
+        <div className="space-y-3 py-1">
+          {[1, 2, 3].map((item) => (
+            <Skeleton key={item} active paragraph={{ rows: 2 }} title={false} />
+          ))}
+        </div>
+      )}
+      {!logsQuery.isLoading && reviewLogs.length === 0 && (
+        <div className="rounded-md bg-slate-50 px-3 py-6 text-center">
+          <Empty
+            description={tradeLogCount > 0 ? `已有 ${tradeLogCount} 条真实成交日志，暂无 AI 复盘日志` : '暂无 AI 复盘日志'}
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+          />
+          {tradeLogCount > 0 && (
+            <>
+              <div className="mx-auto mt-2 max-w-xs text-xs leading-relaxed text-slate-400">
+                当前历史数据只有成交记录。点击下方按钮会基于最近一笔真实成交调用 AI，并把复盘保存到日志。
               </div>
-              <div className="mt-1 line-clamp-3 text-xs leading-relaxed text-slate-600">{log.content}</div>
-            </div>
-          ),
-        }))}
-      />
+              <Button
+                size="small"
+                type="primary"
+                className="mt-3"
+                loading={generateReflection.isPending}
+                onClick={async () => {
+                  try {
+                    await generateReflection.mutateAsync(researcherId);
+                    message.success('AI 复盘已生成');
+                  } catch {
+                    message.error('AI 复盘生成失败，请稍后再试');
+                  }
+                }}
+              >
+                生成 AI 复盘
+              </Button>
+            </>
+          )}
+        </div>
+      )}
+      {!logsQuery.isLoading && reviewLogs.length > 0 && (
+        <Timeline
+          items={reviewLogs.map(({ log, sections }) => ({
+            dot: <ClockCircleOutlined className="text-brand-500" />,
+            children: (
+              <div>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
+                  <span>{formatDate(log.created_at)} {new Date(log.created_at).toLocaleTimeString('zh-CN', { hour12: false })}</span>
+                  <Tag color="purple" className="!text-xs !px-1.5 !py-0">AI复盘</Tag>
+                </div>
+                {log.title && <div className="mt-1 text-xs font-semibold text-slate-700">{log.title}</div>}
+                <div className="mt-2 space-y-2">
+                  {sections.map((section) => (
+                    <div key={section.key} className="rounded-md bg-slate-50 px-2.5 py-2">
+                      <div className="mb-1 text-[11px] font-semibold text-amber-600">{section.title}</div>
+                      <div className="line-clamp-3 text-xs leading-relaxed text-slate-600">{section.content}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ),
+          }))}
+        />
+      )}
     </div>
   );
 }
@@ -758,7 +847,7 @@ function GrowthViewSection({ researcher }: { researcher: HiredResearcher }) {
             <span>任务</span>
           </div>
         </div>
-        <WorkLogSection />
+        <WorkLogSection researcherId={researcher.researcher_id} />
       </div>
     </div>
   );
@@ -798,10 +887,11 @@ function ResearcherDetailView({
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-base font-bold text-slate-800">{researcher.name}</span>
-                {/* 黄色等级标签 —— 对标截图 "中国研究员" */}
-                <span className="inline-flex items-center gap-1 rounded-full bg-amber-400 px-2.5 py-0.5 text-xs font-medium text-white">
-                  {researcher.level || '中国研究员'}
-                </span>
+                {researcher.level && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-400 px-2.5 py-0.5 text-xs font-medium text-white">
+                    {researcher.level}
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-1.5 mt-0.5">
                 <Badge status={researcher.status === 'active' ? 'processing' : 'default'} />
@@ -812,13 +902,14 @@ function ResearcherDetailView({
             </div>
           </div>
 
-          {/* 操作按钮 */}
+          {/*
           <div className="flex flex-wrap items-center gap-1.5">
             <Button size="small" icon={<AppstoreOutlined />}>待办列表 0</Button>
             <Button size="small" icon={<FileTextOutlined />}>制品仓库</Button>
             <Button size="small" icon={<ClockCircleOutlined />}>定时任务</Button>
             <Button size="small" type="primary" icon={<PlusOutlined />}>发布任务</Button>
           </div>
+          */}
         </div>
 
         {/* Tab 切换 —— 概览 / 设置 */}
@@ -875,10 +966,9 @@ function ResearcherDetailView({
 export default function AIResearcherWorkstationPage() {
   const [activeId, setActiveId] = useState<string | null>(null); // 选中的研究员 ID
   const [sortBy, setSortBy] = useState<RankSortBy>('today');
-  const hydrated = useUserSessionStore((s) => s.hydrated);
+  // store 已在创建时同步读取 localStorage，hydrated 初始即为 true，无需再做延迟判断
   const accessToken = useUserSessionStore((s) => s.accessToken);
-  const workbenchEnabled = hydrated && Boolean(accessToken);
-  const overviewQuery = useWorkbenchOverview(sortBy, workbenchEnabled);
+  const overviewQuery = useWorkbenchOverview(sortBy, Boolean(accessToken));
   const hiredResearchers = overviewQuery.data?.hired ?? [];
   const hotDocuments = overviewQuery.data?.hot_documents ?? [];
   const publicRankings = overviewQuery.data?.rankings ?? [];
@@ -946,20 +1036,24 @@ export default function AIResearcherWorkstationPage() {
             docsLoading={overviewQuery.isLoading}
           />
         ) : (
-          <>
-            <ResearcherCardsSection
-              researchers={hiredResearchers}
-              loading={overviewQuery.isLoading}
-              onSelect={setActiveId}
-            />
-            <HotDocumentsSection documents={hotDocuments} loading={overviewQuery.isLoading} />
-            <RankingSection
-              rankings={publicRankings}
-              loading={overviewQuery.isLoading}
-              sortBy={sortBy}
-              onSortChange={setSortBy}
-            />
-          </>
+          <Row gutter={[16, 16]}>
+            <Col xs={24} xl={15} className="space-y-4">
+              <ResearcherCardsSection
+                researchers={hiredResearchers}
+                loading={overviewQuery.isLoading}
+                onSelect={setActiveId}
+              />
+              <HotDocumentsSection documents={hotDocuments} loading={overviewQuery.isLoading} />
+            </Col>
+            <Col xs={24} xl={9} className="space-y-4">
+              <RankingSection
+                rankings={publicRankings}
+                loading={overviewQuery.isLoading}
+                sortBy={sortBy}
+                onSortChange={setSortBy}
+              />
+            </Col>
+          </Row>
         )}
       </div>
     </div>

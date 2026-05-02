@@ -5,6 +5,7 @@ import { Button, Popconfirm, Space, Table, Tag, Tooltip } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import {
   DeleteOutlined,
+  FileTextOutlined,
   EditOutlined,
   HistoryOutlined,
   PauseCircleOutlined,
@@ -12,7 +13,7 @@ import {
   SyncOutlined
 } from '@ant-design/icons';
 
-import { TaskStatus, TaskSummary } from '@/types/tasks';
+import { TaskLifecycleStatus, TaskRunStatus, TaskSummary } from '@/types/tasks';
 
 interface TasksTableProps {
   tasks: TaskSummary[];
@@ -31,14 +32,20 @@ const scheduleTypeLabel: Record<TaskSummary['schedule_type'], string> = {
   cron: 'Cron'
 };
 
-const statusColor: Record<TaskStatus, string> = {
+const lifecycleStatusColor: Record<TaskLifecycleStatus, string> = {
   DRAFT: 'default',
   ACTIVE: 'blue',
+  PAUSED: 'warning',
+  DELETED: 'default'
+};
+
+const runStatusColor: Record<TaskRunStatus, string> = {
+  PENDING: 'default',
   RUNNING: 'processing',
   SUCCESS: 'success',
   FAILED: 'error',
-  PAUSED: 'warning',
-  DELETED: 'default'
+  SKIPPED: 'warning',
+  CANCELED: 'default'
 };
 
 function formatDate(value: string | null): string {
@@ -74,18 +81,25 @@ export function TasksTable({
         render: (value: TaskSummary['schedule_type']) => scheduleTypeLabel[value]
       },
       {
-        title: '创建时间',
-        dataIndex: 'created_at',
-        key: 'created_at',
-        width: 170,
-        render: (value: string) => formatDate(value)
+        title: '状态',
+        dataIndex: 'lifecycle_status',
+        key: 'lifecycle_status',
+        width: 110,
+        render: (status: TaskLifecycleStatus) => <Tag color={lifecycleStatusColor[status]}>{status}</Tag>
       },
       {
-        title: '状态',
-        dataIndex: 'status',
-        key: 'status',
+        title: '下次执行',
+        dataIndex: 'next_run_at',
+        key: 'next_run_at',
+        width: 170,
+        render: (value: string | null) => formatDate(value)
+      },
+      {
+        title: '最近结果',
+        dataIndex: 'last_run_status',
+        key: 'last_run_status',
         width: 110,
-        render: (status: TaskStatus) => <Tag color={statusColor[status]}>{status}</Tag>
+        render: (status: TaskRunStatus | null) => status ? <Tag color={runStatusColor[status]}>{status}</Tag> : '-'
       },
       {
         title: '最近执行',
@@ -117,6 +131,9 @@ export function TasksTable({
             </Tooltip>
             <Tooltip title="执行历史">
               <Button size="small" icon={<HistoryOutlined />} onClick={() => onShowRuns(task)} />
+            </Tooltip>
+            <Tooltip title="查看文档列表">
+              <Button size="small" icon={<FileTextOutlined />} href="/workstation/documents" />
             </Tooltip>
             <Popconfirm title="确认删除该任务？" onConfirm={() => onDelete(task.task_id)}>
               <Button size="small" danger icon={<DeleteOutlined />} />

@@ -16,7 +16,7 @@ export const routes = {
     `/workstation/trading/${researcherId}`,
   billing: '/workstation/billing',
   userGuide: '/workstation/user-guide',
-  // 赛博实验室子页面
+  // 极睿实验室子页面
   labKnowledgeBase: '/workstation/knowledge-base',
   labCreateResearcher: '/workstation/my-researchers',
   labTalentMarket: '/workstation/talent-market',

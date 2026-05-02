@@ -32,11 +32,11 @@ export function IndustryBoardCard() {
   return (
     <StateWrapper data={data} isLoading={isLoading} error={error} title="行业板块涨跌">
       <PageCard title="行业板块涨跌">
-        <div className="divide-y divide-slate-50">
-          {(data ?? []).slice(0, 20).map((item: IndustryBoardItem) => (
+        <div className="flex flex-col gap-0.5">
+          {(data ?? []).slice(0, 10).map((item: IndustryBoardItem) => (
             <div
               key={item.name}
-              className="flex items-center gap-3 py-2 transition-colors hover:bg-slate-50"
+              className="group flex items-center gap-3 rounded-md px-2 py-2 transition-all hover:bg-slate-50"
             >
               {/* 板块名称 */}
               <span className="w-20 shrink-0 text-sm font-medium text-slate-800">

@@ -5,7 +5,9 @@
  *  - 存储 accessToken 和用户信息（UserProfile）
  *  - token 持久化到 localStorage
  *  - 提供 login / logout / hydrate 方法
- *  - hydrate 在应用启动时从 localStorage 恢复会话
+ *
+ * SSR 安全：store 首帧不读取 localStorage，避免服务端与客户端首屏 HTML 不一致。
+ * 客户端挂载后由 hydrate() 恢复登录态。
  */
 import { create } from 'zustand';
 
@@ -25,8 +27,26 @@ interface UserSessionState {
   setUser: (user: UserProfile) => void;
   /** 退出登录，清除 store 和 localStorage */
   logout: () => void;
-  /** 应用启动时从 localStorage 恢复 token */
+  /**
+   * 从 localStorage 恢复登录态。
+   */
   hydrate: () => void;
+}
+
+/**
+ * 同步读取 localStorage 恢复登录态。
+ */
+function readLocalStorage(): { accessToken: string | null; user: UserProfile | null; hydrated: boolean } {
+  if (typeof window === 'undefined') {
+    return { accessToken: null, user: null, hydrated: false };
+  }
+  const token = localStorage.getItem('access_token');
+  const raw = localStorage.getItem('user_profile');
+  let user: UserProfile | null = null;
+  if (raw) {
+    try { user = JSON.parse(raw) as UserProfile; } catch { /* 忽略解析失败 */ }
+  }
+  return { accessToken: token, user, hydrated: true };
 }
 
 export const useUserSessionStore = create<UserSessionState>((set) => ({
@@ -51,13 +71,5 @@ export const useUserSessionStore = create<UserSessionState>((set) => ({
     set({ accessToken: null, user: null, hydrated: true });
   },
 
-  hydrate: () => {
-    const token = localStorage.getItem('access_token');
-    const raw = localStorage.getItem('user_profile');
-    let user: UserProfile | null = null;
-    if (raw) {
-      try { user = JSON.parse(raw) as UserProfile; } catch { /* 忽略解析失败 */ }
-    }
-    set({ accessToken: token, user, hydrated: true });
-  },
+  hydrate: () => set(readLocalStorage()),
 }));

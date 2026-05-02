@@ -37,28 +37,33 @@ export default function NewsAnalysisPage() {
   };
 
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-12 gap-4">
-        {/* Left: News feed */}
-        <div className="col-span-12 flex flex-col gap-4 lg:col-span-8">
-          <div className="rounded-lg bg-white p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <Typography.Title level={5} className="!mb-0">
-                资讯一览
-              </Typography.Title>
+    <div className="h-[calc(100vh-64px-40px)] overflow-hidden">
+      <div className="grid h-full grid-cols-12 gap-6">
+        {/* Left: News feed (Scrollable) */}
+        <div className="col-span-12 flex h-full flex-col gap-4 lg:col-span-8 overflow-hidden">
+          <div className="rounded-xl bg-white p-5 shadow-fintech border border-slate-100/50">
+            <div className="mb-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="h-4 w-1 rounded-full bg-brand-500"></div>
+                <Typography.Title level={5} className="!mb-0 !text-base !font-bold">
+                  资讯一览
+                </Typography.Title>
+              </div>
             </div>
             <FilterControls filters={filters} onFilterChange={handleFilterChange} />
           </div>
 
-          <div className="flex-1 rounded-lg bg-white">
+          <div className="flex-1 rounded-xl bg-white shadow-fintech border border-slate-100/50 overflow-y-auto no-scrollbar">
             <NewsFeed filters={filters} />
           </div>
         </div>
 
-        {/* Right: AI analysis + hot stocks */}
-        <div className="col-span-12 space-y-4 lg:col-span-4">
+        {/* Right: AI analysis + hot stocks (No internal scroll) */}
+        <div className="col-span-12 space-y-5 lg:col-span-4 pb-10">
           <AIPanels />
-          <StockSummaryCard stockCode={filters.stock_code} />
+          <div className="rounded-xl bg-white shadow-fintech border border-slate-100/50 p-1">
+             <StockSummaryCard stockCode={filters.stock_code} />
+          </div>
           <HotNewsList />
         </div>
       </div>

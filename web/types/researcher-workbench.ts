@@ -7,8 +7,12 @@ export interface HiredResearcher {
   summary: string;
   status: string;
   tags: string[];
-  today_yield: number;
-  win_rate_30d: number;
+  today_yield: number | null;
+  today_yield_rate: number | null;
+  month_yield_rate: number | null;
+  total_asset: number | null;
+  win_rate_30d: number | null;
+  has_trading_account: boolean;
   level: string;
 }
 
@@ -18,8 +22,9 @@ export interface HotDocument {
   summary: string;
   researcher_name: string;
   create_time: string;
-  view_count: number;
-  comment_count: number;
+  view_count: number | null;
+  comment_count: number | null;
+  metrics_ready: boolean;
 }
 
 export interface PublicRankItem {

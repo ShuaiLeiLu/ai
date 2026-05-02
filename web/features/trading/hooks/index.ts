@@ -4,7 +4,7 @@
  * 核心优化：页面数据走 /trading/all 聚合接口（单次请求），
  * 拆分到 account / positions / records / logs 四个 queryKey 以供组件消费。
  */
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import type { PositionItem, TradeLogItem, TradeRecord, TradingAccount, TradingAllData, TradingPortfolioData, TradingStats } from '@/types/trading';
 import * as api from '../api';
@@ -127,6 +127,18 @@ export const useTradingLogsWhenEnabled = (researcherId?: string, enabled: boolea
     staleTime: 30_000,
     refetchOnWindowFocus: false,
   });
+
+/** 手动基于最近成交生成 AI 复盘，并刷新日志缓存 */
+export const useGenerateTradeReflection = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (researcherId: string) => api.generateTradeReflection(researcherId),
+    onSuccess: (_data, researcherId) => {
+      queryClient.invalidateQueries({ queryKey: [featureKey, 'logs', researcherId] });
+      queryClient.invalidateQueries({ queryKey: [featureKey, 'all', researcherId] });
+    },
+  });
+};
 
 /** 查询历史交易统计（收益曲线、月度收益、风控指标） */
 export const useTradingStats = (researcherId?: string) =>

@@ -6,10 +6,15 @@
  */
 'use client';
 
-import { Segmented } from 'antd';
+import { Segmented, Skeleton } from 'antd';
 import { useState } from 'react';
-import ReactECharts from 'echarts-for-react';
+import dynamic from 'next/dynamic';
 import type { EChartsOption } from 'echarts';
+
+const ReactECharts = dynamic(() => import('echarts-for-react'), {
+  ssr: false,
+  loading: () => <Skeleton active paragraph={{ rows: 4 }} />,
+});
 
 import { PageCard } from '@/components/ui/page-card';
 import { useTrendsQuery } from '@/features/preopen/hooks';

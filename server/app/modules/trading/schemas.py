@@ -62,6 +62,13 @@ class TradeRecord(SchemaModel):
     created_at: datetime
 
 
+class TradeLogSection(SchemaModel):
+    """交易复盘结构化段落，便于工作台直接渲染。"""
+    key: str
+    title: str
+    content: str
+
+
 class TradeLogItem(SchemaModel):
     """交易日志条目"""
     log_id: str
@@ -69,7 +76,13 @@ class TradeLogItem(SchemaModel):
     trade_records: list[TradeRecord] = Field(default_factory=list)  # log_type=trade 时关联的成交记录
     title: str = ""
     content: str = ""          # Markdown 富文本
+    sections: list[TradeLogSection] = Field(default_factory=list)  # analysis 日志的结构化段落
     created_at: datetime
+
+
+class GenerateTradeReflectionResponse(SchemaModel):
+    """手动生成 AI 交易复盘结果。"""
+    log: TradeLogItem
 
 
 class EquityPoint(SchemaModel):

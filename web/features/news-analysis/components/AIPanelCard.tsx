@@ -15,40 +15,43 @@ interface AIPanelCardProps {
   color?: 'blue' | 'orange' | 'red' | 'green';
 }
 
-/** 卡片背景渐变色 + 边框色映射 */
+/** 卡片配色映射 (精致金融版) */
 const colorMap = {
-  blue: 'from-blue-50 to-blue-100/50 border-blue-200',
-  orange: 'from-amber-50 to-amber-100/50 border-amber-200',
-  red: 'from-rose-50 to-rose-100/50 border-rose-200',
-  green: 'from-emerald-50 to-emerald-100/50 border-emerald-200',
-};
-
-/** 卡片标题文字色映射 */
-const titleColorMap = {
-  blue: 'text-blue-700',
-  orange: 'text-amber-700',
-  red: 'text-rose-700',
-  green: 'text-emerald-700',
+  blue: 'bg-blue-50/30 border-blue-100 text-blue-600',
+  orange: 'bg-amber-50/30 border-amber-100 text-amber-600',
+  red: 'bg-rose-50/30 border-rose-100 text-rose-600',
+  green: 'bg-emerald-50/30 border-emerald-100 text-emerald-600',
 };
 
 export function AIPanelCard({ title, summary, highlights, loading, color = 'blue' }: AIPanelCardProps) {
   return (
-    <div className={`rounded-lg border bg-gradient-to-br p-4 ${colorMap[color]}`}>
-      <div className={`mb-2 text-sm font-semibold ${titleColorMap[color]}`}>{title}</div>
-      {loading ? (
-        <Skeleton active paragraph={{ rows: 2 }} title={false} />
-      ) : (
-        <div className="space-y-1">
-          <Typography.Paragraph className="!mb-1 !text-sm !text-slate-700">
-            {summary || '暂无内容'}
-          </Typography.Paragraph>
-          {highlights?.map((point, index) => (
-            <div key={`${title}-${index}`} className="text-xs text-slate-500">
-              • {point}
-            </div>
-          ))}
+    <div className={`group relative overflow-hidden rounded-xl border bg-white p-4 transition-all duration-300 hover:shadow-fintech ${colorMap[color]}`}>
+      {/* 绚丽点缀：极细左侧强调线 */}
+      <div className={`absolute left-0 top-0 h-full w-1 opacity-60 ${color === 'blue' ? 'bg-blue-500' : color === 'orange' ? 'bg-amber-500' : color === 'red' ? 'bg-rose-500' : 'bg-emerald-500'}`}></div>
+
+      <div className="relative z-10">
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-[12px] font-bold uppercase tracking-wider opacity-80">{title}</span>
+          <div className={`h-1.5 w-1.5 rounded-full ${color === 'blue' ? 'bg-blue-400' : color === 'orange' ? 'bg-amber-400' : color === 'red' ? 'bg-rose-400' : 'bg-emerald-400'}`}></div>
         </div>
-      )}
+
+        {loading ? (
+          <Skeleton active paragraph={{ rows: 2, width: '100%' }} title={false} />
+        ) : (
+          <div className="space-y-2">
+            <div className="text-[13px] leading-relaxed text-slate-600 font-medium line-clamp-2 group-hover:text-slate-900 transition-colors">
+              {summary || '暂无分析数据'}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+               {highlights?.slice(0, 2).map((point, index) => (
+                  <span key={index} className="inline-block px-1.5 py-0.5 rounded bg-white/80 border border-slate-100 text-[10px] text-slate-500 font-medium">
+                     {point}
+                  </span>
+               ))}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
