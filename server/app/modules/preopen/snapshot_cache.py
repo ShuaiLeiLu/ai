@@ -6,7 +6,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, TypeVar
+from typing import Any, Generic, TypeVar
 from uuid import uuid4
 
 from pydantic import BaseModel, TypeAdapter
@@ -27,7 +27,7 @@ return 0
 
 
 @dataclass(frozen=True)
-class SnapshotSpec[T]:
+class SnapshotSpec(Generic[T]):
     name: str
     adapter: TypeAdapter[T]
     empty_factory: Callable[[], T]
