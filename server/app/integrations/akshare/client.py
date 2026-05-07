@@ -53,6 +53,7 @@ _AKSHARE_PROXY_ENV_KEYS = (
 _no_proxy_url_opener = build_opener(ProxyHandler({}))
 _proxy_bypass_installed = False
 _proxy_install_lock = Lock()
+_external_data_lock = Lock()
 _DEFAULT_REQUEST_TIMEOUT_SECONDS = 10
 
 
@@ -101,12 +102,19 @@ async def run_sync(fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
 
 
 def call_akshare_api(api_name: str, /, *args: Any, **kwargs: Any) -> Any:
-    """Call an AKShare API while bypassing broken shell proxy settings."""
+    """Call an AKShare API while serializing access to fragile upstream data sources."""
     _install_proxy_bypass()
     import akshare as ak
 
     api = getattr(ak, api_name)
-    return api(*args, **kwargs)
+    with _external_data_lock:
+        return api(*args, **kwargs)
+
+
+def _open_external_data_url(request: Request, *, timeout: float):
+    _install_proxy_bypass()
+    with _external_data_lock:
+        return _no_proxy_url_opener.open(request, timeout=timeout)
 
 
 # ════════════════════════════════════════════════════════════
@@ -366,8 +374,7 @@ def _parse_tencent_timestamp(raw: str) -> str:
 def _fetch_stock_quote_tencent(symbol: str) -> StockQuote | None:
     url = f"https://qt.gtimg.cn/q={_tencent_realtime_symbol(symbol)}"
     request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    _install_proxy_bypass()
-    response = _no_proxy_url_opener.open(request, timeout=8)
+    response = _open_external_data_url(request, timeout=8)
     text = response.read().decode("gbk", errors="ignore")
     if '="' not in text:
         return None
@@ -411,8 +418,7 @@ def _fetch_stock_quotes_eastmoney(symbols: list[str]) -> dict[str, StockQuote]:
     })
     url = f"https://push2.eastmoney.com/api/qt/ulist.np/get?{params}"
     request = Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    _install_proxy_bypass()
-    response = _no_proxy_url_opener.open(request, timeout=8)
+    response = _open_external_data_url(request, timeout=8)
     payload = json.loads(response.read().decode("utf-8"))
 
     quotes: dict[str, StockQuote] = {}
@@ -1086,7 +1092,7 @@ def _get_stock_history_from_tencent(
 
     try:
         req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
-        with _no_proxy_url_opener.open(req, timeout=12) as response:
+        with _open_external_data_url(req, timeout=12) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except Exception:
         logger.exception("腾讯历史日 K 失败：%s %s~%s", symbol, start_date, end_date)
