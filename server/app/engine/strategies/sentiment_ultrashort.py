@@ -22,6 +22,7 @@ from app.integrations.akshare.client import (
     call_akshare_api,
     get_limit_down_pool,
     get_limit_up_pool,
+    run_sync,
 )
 from app.models.researcher import Researcher
 from app.models.trading import Position, TradeLog, TradingAccount
@@ -389,6 +390,37 @@ def _build_sentiment_snapshot(
     return score, meta
 
 
+async def _fetch_realtime_quotes_async() -> list[dict]:
+    return await run_sync(fetch_realtime_quotes)
+
+
+async def _build_sentiment_snapshot_async(
+    all_quotes: list[dict],
+    *,
+    trade_day: date,
+    lookback_days: int,
+) -> tuple[SentimentScore, dict]:
+    return await run_sync(
+        _build_sentiment_snapshot,
+        all_quotes,
+        trade_day=trade_day,
+        lookback_days=lookback_days,
+    )
+
+
+async def _enrich_quotes_with_mainline_industries_async(
+    all_quotes: list[dict],
+    today_limit_counts: Counter[str],
+    config: dict,
+) -> list[dict]:
+    return await run_sync(
+        _enrich_quotes_with_mainline_industries,
+        all_quotes,
+        today_limit_counts,
+        config,
+    )
+
+
 def _is_stock_pool_allowed(
     symbol: str,
     name: str,
@@ -748,8 +780,8 @@ async def execute(session: AsyncSession, researcher: Researcher) -> int:
     pos_result = await session.execute(pos_stmt)
     current_positions = {p.symbol: p for p in pos_result.scalars().all()}
 
-    all_quotes = fetch_realtime_quotes()
-    score, meta = _build_sentiment_snapshot(
+    all_quotes = await _fetch_realtime_quotes_async()
+    score, meta = await _build_sentiment_snapshot_async(
         all_quotes,
         trade_day=trade_day,
         lookback_days=lookback_days,
@@ -757,7 +789,7 @@ async def execute(session: AsyncSession, researcher: Researcher) -> int:
     limit_up_pool: list[LimitUpStock] = meta["limit_up_pool"]
     today_limit_counts = _industry_limit_counts(limit_up_pool)
     if score.stage == "fermentation":
-        all_quotes = _enrich_quotes_with_mainline_industries(
+        all_quotes = await _enrich_quotes_with_mainline_industries_async(
             all_quotes,
             today_limit_counts,
             config,

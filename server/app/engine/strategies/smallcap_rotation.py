@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.engine.paper_trading.executor import do_buy, do_sell, invalidate_trading_cache
 from app.engine.paper_trading.state import set_limit_up_symbols
 from app.engine.strategies.market import fetch_realtime_quotes
+from app.integrations.akshare.client import run_sync
 from app.models.researcher import Researcher
 from app.models.trading import Position, TradeLog, TradingAccount
 
@@ -179,6 +180,10 @@ def generate_target_pool(strategy_config: dict, count: int = 10) -> list[dict]:
     return generate_target_pool_from_quotes(strategy_config, fetch_realtime_quotes(), count)
 
 
+async def _fetch_realtime_quotes_async() -> list[dict]:
+    return await run_sync(fetch_realtime_quotes)
+
+
 def _gen_daily_summary(
     sell_count: int,
     buy_count: int,
@@ -258,7 +263,7 @@ async def execute(session: AsyncSession, researcher: Researcher) -> int:
         temp_set.update(hl)
     _not_buy_again[rid] = temp_set
 
-    all_quotes = fetch_realtime_quotes()
+    all_quotes = await _fetch_realtime_quotes_async()
     realtime_quote_map: dict[str, dict] = {q["symbol"]: q for q in all_quotes}
     realtime_price_map: dict[str, float] = {q["symbol"]: q["price"] for q in all_quotes}
     realtime_change_map: dict[str, float] = {q["symbol"]: q["change_pct"] for q in all_quotes}

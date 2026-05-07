@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime as dt
 from datetime import time, timedelta
@@ -31,6 +32,7 @@ logger = logging.getLogger(__name__)
 # A股交易时段（含集合竞价到收盘），工作日 09:15 ~ 15:00
 _TRADING_START = time(9, 15)
 _TRADING_END = time(15, 0)
+_STRATEGY_JOB_TIMEOUT_SECONDS = 90
 
 _scheduler: AsyncIOScheduler | None = None
 _database: DatabaseFactory | None = None
@@ -65,8 +67,13 @@ async def _run_daily_rotation(db: DatabaseFactory) -> None:
     logger.info("[调度器] 开始执行每日轮动调仓...")
     try:
         async with db.session_factory() as session:
-            result = await execute_daily_rotation(session)
+            result = await asyncio.wait_for(
+                execute_daily_rotation(session),
+                timeout=_STRATEGY_JOB_TIMEOUT_SECONDS,
+            )
         logger.info("[调度器] 调仓完成: %s", result)
+    except TimeoutError:
+        logger.exception("[调度器] 调仓执行超时，已终止本次任务")
     except Exception:
         logger.exception("[调度器] 调仓执行异常")
 
@@ -82,8 +89,13 @@ async def _run_intraday_confirmation(db: DatabaseFactory) -> None:
     logger.info("[调度器] 开始执行盘中承接确认...")
     try:
         async with db.session_factory() as session:
-            result = await execute_intraday_confirmation(session)
+            result = await asyncio.wait_for(
+                execute_intraday_confirmation(session),
+                timeout=_STRATEGY_JOB_TIMEOUT_SECONDS,
+            )
         logger.info("[调度器] 盘中确认完成: %s", result)
+    except TimeoutError:
+        logger.exception("[调度器] 盘中确认执行超时，已终止本次任务")
     except Exception:
         logger.exception("[调度器] 盘中确认执行异常")
 
@@ -99,8 +111,13 @@ async def _run_limit_up_check(db: DatabaseFactory) -> None:
     logger.info("[调度器] 开始执行涨停打开检查...")
     try:
         async with db.session_factory() as session:
-            result = await check_limit_up(session)
+            result = await asyncio.wait_for(
+                check_limit_up(session),
+                timeout=_STRATEGY_JOB_TIMEOUT_SECONDS,
+            )
         logger.info("[调度器] 涨停检查完成: %s", result)
+    except TimeoutError:
+        logger.exception("[调度器] 涨停检查执行超时，已终止本次任务")
     except Exception:
         logger.exception("[调度器] 涨停检查执行异常")
 

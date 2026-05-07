@@ -53,6 +53,7 @@ _AKSHARE_PROXY_ENV_KEYS = (
 _no_proxy_url_opener = build_opener(ProxyHandler({}))
 _proxy_bypass_installed = False
 _proxy_install_lock = Lock()
+_DEFAULT_REQUEST_TIMEOUT_SECONDS = 10
 
 
 def _install_proxy_bypass() -> None:
@@ -68,13 +69,19 @@ def _install_proxy_bypass() -> None:
 
         import requests
         _original_merge = requests.sessions.Session.merge_environment_settings
+        _original_request = requests.sessions.Session.request
 
         def merge_without_proxy(self: Any, url: str, proxies: Any, stream: Any, verify: Any, cert: Any) -> dict[str, Any]:
             settings = _original_merge(self, url, proxies, stream, verify, cert)
             settings["proxies"] = {}
             return settings
 
+        def request_with_default_timeout(self: Any, method: str, url: str, **kwargs: Any) -> Any:
+            kwargs.setdefault("timeout", _DEFAULT_REQUEST_TIMEOUT_SECONDS)
+            return _original_request(self, method, url, **kwargs)
+
         requests.sessions.Session.merge_environment_settings = merge_without_proxy  # type: ignore[assignment]
+        requests.sessions.Session.request = request_with_default_timeout  # type: ignore[assignment]
         _proxy_bypass_installed = True
         logger.info("[AKShare] 代理绕过已安装，后续调用无需加锁")
 

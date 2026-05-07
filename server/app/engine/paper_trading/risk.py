@@ -8,10 +8,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.engine.paper_trading.executor import do_sell, invalidate_trading_cache
 from app.engine.paper_trading.state import get_limit_up_symbols
 from app.engine.strategies.market import fetch_realtime_quotes
+from app.integrations.akshare.client import run_sync
 from app.models.researcher import Researcher
 from app.models.trading import Position, TradingAccount
 
 logger = logging.getLogger(__name__)
+
+
+async def _fetch_realtime_quotes_async() -> list[dict]:
+    return await run_sync(fetch_realtime_quotes)
 
 
 async def check_limit_up_open(session: AsyncSession) -> dict:
@@ -43,7 +48,7 @@ async def check_limit_up_open(session: AsyncSession) -> dict:
         if not account:
             continue
 
-        realtime_map = {q["symbol"]: q for q in fetch_realtime_quotes()}
+        realtime_map = {q["symbol"]: q for q in await _fetch_realtime_quotes_async()}
         pos_stmt = select(Position).where(Position.account_id == account.id)
         pos_result = await session.execute(pos_stmt)
         positions = {p.symbol: p for p in pos_result.scalars().all()}
