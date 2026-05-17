@@ -2,9 +2,57 @@
 
 import { AntdRegistry } from '@ant-design/nextjs-registry';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { App as AntdApp, ConfigProvider, theme } from 'antd';
-import type { PropsWithChildren } from 'react';
+import { App as AntdApp, Button, ConfigProvider, Result, theme } from 'antd';
+import { Component, type ErrorInfo, type PropsWithChildren, type ReactNode } from 'react';
 import { useState } from 'react';
+
+/* ── React Error Boundary ── */
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+class AppErrorBoundary extends Component<PropsWithChildren, ErrorBoundaryState> {
+  constructor(props: PropsWithChildren) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
+    console.error('[AppErrorBoundary] Uncaught error:', error, errorInfo);
+  }
+
+  handleReset = (): void => {
+    this.setState({ hasError: false, error: null });
+  };
+
+  render(): ReactNode {
+    if (this.state.hasError) {
+      return (
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}>
+          <Result
+            status="error"
+            title="页面发生了意外错误"
+            subTitle={this.state.error?.message || '请尝试刷新页面'}
+            extra={[
+              <Button key="reload" type="primary" onClick={() => window.location.reload()}>
+                刷新页面
+              </Button>,
+              <Button key="back" onClick={this.handleReset}>
+                尝试恢复
+              </Button>,
+            ]}
+          />
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export function AppProviders({ children }: PropsWithChildren) {
   const [queryClient] = useState(
@@ -75,7 +123,11 @@ export function AppProviders({ children }: PropsWithChildren) {
         }}
       >
         <AntdApp>
-          <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+          <AppErrorBoundary>
+            <QueryClientProvider client={queryClient}>
+              {children}
+            </QueryClientProvider>
+          </AppErrorBoundary>
         </AntdApp>
       </ConfigProvider>
     </AntdRegistry>

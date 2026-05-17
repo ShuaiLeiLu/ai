@@ -54,6 +54,11 @@ class AiDigest(SchemaModel):
     generated_at: datetime
     sentiment: NewsSentiment
     key_points: list[str]
+    news_drivers: list[str] = []
+    opportunity_sectors: list[str] = []
+    risk_sectors: list[str] = []
+    intraday_watch: list[str] = []
+    simulation_plan: list[str] = []
 
 
 class MarketIndicator(SchemaModel):

@@ -8,6 +8,7 @@ from app.models.billing import BatteryLedger, MembershipOrder
 from app.models.community import Comment, Post
 from app.models.document import Document
 from app.models.ecosystem import KnowledgeBase, McpAuthorization, McpServer, SkillPack
+from app.models.preopen import PreopenMarketSnapshot
 from app.models.researcher import Researcher, ResearcherHire
 from app.models.task import OrchestrationTask, OrchestrationTaskRun, OrchestrationTaskRunLog
 from app.models.trading import Position, TradingAccount, TradingAccountSnapshot, TradeLog, TradeRecord
@@ -36,6 +37,8 @@ __all__ = [
     "Position",
     "TradeRecord",
     "TradeLog",
+    # 盘前
+    "PreopenMarketSnapshot",
     # 计费
     "BatteryLedger",
     "MembershipOrder",

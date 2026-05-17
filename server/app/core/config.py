@@ -24,10 +24,10 @@ class Settings(BaseSettings):
     app_name: str = Field(default="极睿智投", alias="APP_NAME")
     app_env: str = Field(default="local", alias="APP_ENV")
     app_version: str = Field(default="0.1.0", alias="APP_VERSION")
-    debug: bool = Field(default=True, alias="DEBUG")
+    debug: bool = Field(default=False, alias="DEBUG")
     api_v1_prefix: str = Field(default="/api/v1", alias="API_V1_PREFIX")
 
-    secret_key: str = Field(default="change-me", alias="SECRET_KEY")
+    secret_key: str = Field(alias="SECRET_KEY")  # 必须通过环境变量或 .env 显式设置
     access_token_expire_minutes: int = Field(default=1440, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
 
     database_url: str = Field(
@@ -37,7 +37,10 @@ class Settings(BaseSettings):
     redis_url: str = Field(default="redis://localhost:6379/2", alias="REDIS_URL")
 
     frontend_url: str = Field(default="http://localhost:3000", alias="FRONTEND_URL")
-    cors_origins: list[str] = Field(default_factory=lambda: ["*"], alias="CORS_ORIGINS")
+    cors_origins: list[str] = Field(
+        default_factory=lambda: ["http://localhost:3000"],
+        alias="CORS_ORIGINS",
+    )
 
     s3_endpoint_url: str | None = Field(default=None, alias="S3_ENDPOINT_URL")
     s3_access_key: str | None = Field(default=None, alias="S3_ACCESS_KEY")

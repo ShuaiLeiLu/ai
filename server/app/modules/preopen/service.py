@@ -7,7 +7,7 @@
   - 涨停天梯：AKShare stock_zt_pool_em（按连板数排序）
   - 异常波动：AKShare stock_zt_pool_strong_em + stock_zt_pool_dtgc_em（强势股+跌停股中筛选）
   - AI 解读：基于涨停池数据聚合生成
-  - 趋势数据：仍为样例（需要历史涨停池数据，后续接入）
+  - 趋势数据：每日盘前市场快照落库后，基于真实历史快照生成
 
 所有 AKShare 调用在 client 层带 TTL 缓存。
 """
@@ -19,8 +19,11 @@ import time
 from collections import Counter
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
+from uuid import uuid4
 
 from fastapi import HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.integrations.akshare.client import (
     get_industry_boards,
@@ -45,6 +48,7 @@ from app.modules.preopen.schemas import (
     TrendPoint,
     TrendSeries,
 )
+from app.models.preopen import PreopenMarketSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -57,8 +61,12 @@ def _make_calendar() -> TradingCalendarHint:
     """构建交易日历提示。"""
     today = date.today()
     is_trading = today.weekday() < 5
+    trade_date = today
+    if not is_trading:
+        while trade_date.weekday() >= 5:
+            trade_date -= timedelta(days=1)
     return TradingCalendarHint(
-        trade_date=today,
+        trade_date=trade_date,
         is_trading_day=is_trading,
         notice="非交易日展示最近交易日快照" if not is_trading else "盘前快照数据",
     )
@@ -198,6 +206,17 @@ class PreopenService:
             generated_at=now,
             sentiment=sentiment,
             key_points=key_points,
+            news_drivers=[n.title for n in get_live_news_merged()[:3]],
+            opportunity_sectors=[ind for ind, _ in top_industries[:3]],
+            risk_sectors=["跌停池扩散方向" if len(get_limit_down_pool()) > 5 else "暂无明显扩散风险"],
+            intraday_watch=[
+                "09:25-09:40 观察昨日涨停溢价和连板高度是否继续打开",
+                "10:30 前确认资金是否沿新闻催化方向形成板块共振",
+            ],
+            simulation_plan=[
+                "模拟盘只在新闻方向、涨停结构和个股承接共振时开仓",
+                "若热点只有单点消息无板块跟随，优先观望或降低仓位",
+            ],
         )
 
     async def generate_ai_digest_with_llm(self) -> AiDigest:
@@ -224,18 +243,27 @@ class PreopenService:
         # 2. 构建 prompt
         system_prompt = (
             "你是一名专业的 A 股盘前分析师，每天为投资者提供盘前市场解读。"
-            "请基于提供的实时市场数据，生成一段盘前解读。\n\n"
+            "请基于提供的实时市场数据，生成一段能指导盘中模拟盘观察的盘前解读。"
+            "新闻可能改变全天主线，你必须把新闻催化、板块映射、风险方向和盘中验证条件讲清楚。\n\n"
             "请严格按以下 JSON 格式返回，不要添加任何其他内容：\n"
             '{\n'
             '  "headline": "一句话盘前概述（不超过 40 字）",\n'
             '  "sentiment": "bullish 或 bearish 或 neutral",\n'
-            '  "key_points": ["要点1", "要点2", "要点3", "要点4"]\n'
+            '  "key_points": ["市场结构要点1", "市场结构要点2", "市场结构要点3"],\n'
+            '  "news_drivers": ["最可能影响今日市场的新闻1", "新闻2"],\n'
+            '  "opportunity_sectors": ["可能受益方向1", "方向2"],\n'
+            '  "risk_sectors": ["可能承压方向1", "方向2"],\n'
+            '  "intraday_watch": ["盘中验证条件1", "盘中验证条件2"],\n'
+            '  "simulation_plan": ["模拟盘动作建议1", "模拟盘动作建议2"]\n'
             '}\n\n'
             "要求：\n"
             "- headline 概括今日盘前核心看点\n"
             "- sentiment 基于数据判断市场情绪偏向\n"
-            "- key_points 3-5 个要点，每个不超过 40 字\n"
-            "- 分析要有投资参考价值，不要简单复述数字"
+            "- key_points 3-5 个要点，每个不超过 50 字\n"
+            "- news_drivers 必须来自提供的快讯标题，不要编造新闻\n"
+            "- opportunity_sectors/risk_sectors 要能映射到新闻或涨停行业分布\n"
+            "- intraday_watch 要写具体验证条件，比如涨停扩散、开盘溢价、成交额承接\n"
+            "- simulation_plan 要给模拟盘仓位/开仓/观望建议，但不要承诺收益"
         )
 
         messages = [
@@ -290,6 +318,11 @@ class PreopenService:
         headline = data.get("headline", "")
         sentiment = data.get("sentiment", "neutral")
         key_points = data.get("key_points", [])
+        news_drivers = data.get("news_drivers", [])
+        opportunity_sectors = data.get("opportunity_sectors", [])
+        risk_sectors = data.get("risk_sectors", [])
+        intraday_watch = data.get("intraday_watch", [])
+        simulation_plan = data.get("simulation_plan", [])
 
         if not headline or not key_points:
             return None
@@ -305,6 +338,11 @@ class PreopenService:
             generated_at=now,
             sentiment=sentiment,
             key_points=key_points,
+            news_drivers=news_drivers if isinstance(news_drivers, list) else [],
+            opportunity_sectors=opportunity_sectors if isinstance(opportunity_sectors, list) else [],
+            risk_sectors=risk_sectors if isinstance(risk_sectors, list) else [],
+            intraday_watch=intraday_watch if isinstance(intraday_watch, list) else [],
+            simulation_plan=simulation_plan if isinstance(simulation_plan, list) else [],
         )
 
     # ─────────────── 市场指标 ───────────────
@@ -509,56 +547,142 @@ class PreopenService:
 
     # ─────────────── 趋势数据 ───────────────
 
-    def get_trends(self) -> TrendOverview:
-        """15 日趋势数据。
-
-        注意：AKShare 无法批量获取历史涨停池，此处仍用当日数据 + 模拟历史趋势。
-        后续可接入历史数据服务替换。
-        """
+    def collect_market_snapshot_payload(self, trade_date: date | None = None) -> dict[str, Any]:
+        """采集一份真实市场结构快照，供落库和兜底趋势共用。"""
         calendar = _make_calendar()
+        snapshot_date = trade_date or calendar.trade_date
         pool = get_limit_up_pool()
         dt_pool = get_limit_down_pool()
+        strong = get_strong_pool()
 
-        today_zt = len(pool)
-        today_dt = len(dt_pool)
-        today_multi = sum(1 for s in pool if s.consecutive >= 2)
+        total_zt = len(pool)
+        no_break = sum(1 for s in pool if int(getattr(s, "break_count", 0) or 0) == 0) if pool else 0
+        industry_counter = Counter(
+            getattr(s, "industry", "") for s in pool if getattr(s, "industry", "")
+        )
 
-        points_dates = self._latest_trade_dates(days=15, ref_date=calendar.trade_date)
+        return {
+            "trade_date": snapshot_date,
+            "snapshot_at": datetime.now(tz=UTC),
+            "limit_up_count": total_zt,
+            "limit_down_count": len(dt_pool),
+            "consecutive_limit_up_count": sum(1 for s in pool if int(getattr(s, "consecutive", 0) or 0) >= 2),
+            "highest_consecutive": max((int(getattr(s, "consecutive", 0) or 0) for s in pool), default=0),
+            "strong_count": len(strong),
+            "break_count": sum(1 for s in pool if int(getattr(s, "break_count", 0) or 0) > 0),
+            "seal_ratio": round(no_break / total_zt * 100, 2) if total_zt else 0.0,
+            "top_industries": [
+                {"name": industry, "limit_up_count": count}
+                for industry, count in industry_counter.most_common(8)
+            ],
+        }
 
-        # 用当日真实数据作为最后一天，其余模拟
-        import random
-        random.seed(42)  # 固定种子保证每次一样
+    async def async_record_market_snapshot(
+        self,
+        session: AsyncSession,
+        trade_date: date | None = None,
+    ) -> PreopenMarketSnapshot:
+        """写入或更新当天盘前市场快照。"""
+        payload = await run_sync(self.collect_market_snapshot_payload, trade_date)
+        result = await session.execute(
+            select(PreopenMarketSnapshot).where(
+                PreopenMarketSnapshot.trade_date == payload["trade_date"]
+            )
+        )
+        snapshot = result.scalar_one_or_none()
+        if snapshot is None:
+            snapshot = PreopenMarketSnapshot(id=f"pm_{uuid4().hex[:12]}", **payload)
+            session.add(snapshot)
+        else:
+            for key, value in payload.items():
+                setattr(snapshot, key, value)
+        await session.flush()
+        return snapshot
 
-        def _make_series(base: int, volatility: int, last_val: int) -> list[int]:
-            vals = [base + random.randint(-volatility, volatility) for _ in range(14)]
-            vals.append(last_val)
-            return vals
-
-        zt_values = _make_series(60, 15, today_zt)
-        dt_values = _make_series(8, 4, today_dt)
-        multi_values = _make_series(12, 5, today_multi)
-
+    @staticmethod
+    def _trend_overview_from_snapshots(
+        rows: list[PreopenMarketSnapshot],
+        *,
+        requested_days: int,
+    ) -> TrendOverview:
+        calendar = _make_calendar()
+        ordered = sorted(rows, key=lambda row: row.trade_date)
         return TrendOverview(
             calendar=calendar,
-            window_days=15,
+            window_days=min(requested_days, len(ordered)) if ordered else 0,
             series=[
                 TrendSeries(
                     metric="daily_limit_up_count",
                     label="每日涨停家数",
                     unit="家",
-                    points=[TrendPoint(trade_date=d, value=v) for d, v in zip(points_dates, zt_values, strict=True)],
+                    points=[
+                        TrendPoint(trade_date=row.trade_date, value=row.limit_up_count)
+                        for row in ordered
+                    ],
                 ),
                 TrendSeries(
                     metric="daily_limit_down_count",
                     label="每日跌停家数",
                     unit="家",
-                    points=[TrendPoint(trade_date=d, value=v) for d, v in zip(points_dates, dt_values, strict=True)],
+                    points=[
+                        TrendPoint(trade_date=row.trade_date, value=row.limit_down_count)
+                        for row in ordered
+                    ],
                 ),
                 TrendSeries(
                     metric="consecutive_limit_up_count",
                     label="连板家数",
                     unit="家",
-                    points=[TrendPoint(trade_date=d, value=v) for d, v in zip(points_dates, multi_values, strict=True)],
+                    points=[
+                        TrendPoint(trade_date=row.trade_date, value=row.consecutive_limit_up_count)
+                        for row in ordered
+                    ],
+                ),
+            ],
+        )
+
+    async def async_get_trends(self, session: AsyncSession, *, days: int = 15) -> TrendOverview:
+        """从落库快照读取多日趋势，并先确保最近交易日已有真实快照。"""
+        await self.async_record_market_snapshot(session)
+        result = await session.execute(
+            select(PreopenMarketSnapshot)
+            .order_by(PreopenMarketSnapshot.trade_date.desc())
+            .limit(days)
+        )
+        rows = list(result.scalars().all())
+        return self._trend_overview_from_snapshots(rows, requested_days=days)
+
+    def get_trends(self) -> TrendOverview:
+        """趋势兜底：只返回最新真实快照点，不伪造历史。"""
+        calendar = _make_calendar()
+        payload = self.collect_market_snapshot_payload(calendar.trade_date)
+
+        return TrendOverview(
+            calendar=calendar,
+            window_days=1,
+            series=[
+                TrendSeries(
+                    metric="daily_limit_up_count",
+                    label="每日涨停家数",
+                    unit="家",
+                    points=[TrendPoint(trade_date=calendar.trade_date, value=payload["limit_up_count"])],
+                ),
+                TrendSeries(
+                    metric="daily_limit_down_count",
+                    label="每日跌停家数",
+                    unit="家",
+                    points=[TrendPoint(trade_date=calendar.trade_date, value=payload["limit_down_count"])],
+                ),
+                TrendSeries(
+                    metric="consecutive_limit_up_count",
+                    label="连板家数",
+                    unit="家",
+                    points=[
+                        TrendPoint(
+                            trade_date=calendar.trade_date,
+                            value=payload["consecutive_limit_up_count"],
+                        )
+                    ],
                 ),
             ],
         )

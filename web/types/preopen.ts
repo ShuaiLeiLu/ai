@@ -27,6 +27,11 @@ export interface AiDigest {
   generated_at: string;
   sentiment: 'bullish' | 'neutral' | 'bearish';
   key_points: string[];
+  news_drivers?: string[];
+  opportunity_sectors?: string[];
+  risk_sectors?: string[];
+  intraday_watch?: string[];
+  simulation_plan?: string[];
 }
 
 export interface MarketIndicator {

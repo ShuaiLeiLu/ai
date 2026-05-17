@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 STRATEGY_TYPE = "smallcap_rotation"
 BLACKLIST_DAYS = 20
+DEFAULT_ROTATION_WEEKDAYS = {0, 1, 2, 3, 4}
 
 _hold_history: dict[str, list[list[str]]] = defaultdict(list)
 _not_buy_again: dict[str, set[str]] = defaultdict(set)
@@ -35,7 +36,11 @@ def _filter_basic(all_quotes: list[dict], filters: dict) -> list[dict]:
         change_pct = q["change_pct"]
         amount = q["amount"]
 
-        if symbol.startswith(("8", "4")) and len(symbol) == 6:
+        if symbol.startswith(("8", "4", "920", "830", "870")) and len(symbol) == 6:
+            continue
+        if filters.get("exclude_bj", True) and symbol.startswith(("920", "830", "870")):
+            continue
+        if filters.get("exclude_chinext", False) and symbol.startswith(("300", "301")):
             continue
         if filters.get("exclude_kcb", True) and symbol.startswith("688"):
             continue
@@ -54,6 +59,17 @@ def _filter_basic(all_quotes: list[dict], filters: dict) -> list[dict]:
     return candidates
 
 
+def _market_cap_sort_value(q: dict) -> float:
+    cap = float(q.get("circulating_market_cap") or 0.0)
+    if cap > 0:
+        return cap
+    return float(q.get("amount") or 0.0) * 20
+
+
+def _is_basic_source(all_quotes: list[dict]) -> bool:
+    return bool(all_quotes) and all(q.get("_source") == "sina_basic" for q in all_quotes[: min(len(all_quotes), 20)])
+
+
 def _pool_sg(candidates: list[dict], take: int = 5) -> list[dict]:
     pool = [q for q in candidates if q["pe_ratio"] > 0 and q["change_pct_ytd"] != 0]
     if not pool:
@@ -61,7 +77,7 @@ def _pool_sg(candidates: list[dict], take: int = 5) -> list[dict]:
 
     pool.sort(key=lambda x: x["change_pct_ytd"], reverse=True)
     top10pct = pool[:max(1, len(pool) // 10)]
-    top10pct.sort(key=lambda x: x.get("circulating_market_cap", 1e18))
+    top10pct.sort(key=_market_cap_sort_value)
     selected = top10pct[:take]
     logger.info("[SG池] 候选 %d → 前10%% %d → 选中 %d", len(pool), len(top10pct), len(selected))
     return selected
@@ -86,11 +102,12 @@ def _pool_ms(candidates: list[dict], take: int = 5) -> list[dict]:
 
     df = df.sort_values("total_score", ascending=False)
     top10pct = df.head(max(1, len(df) // 10))
-    top10pct = top10pct.sort_values("circulating_market_cap", ascending=True)
+    top10pct = top10pct.assign(_sort_cap=top10pct.apply(lambda row: _market_cap_sort_value(row.to_dict()), axis=1))
+    top10pct = top10pct.sort_values("_sort_cap", ascending=True)
 
     selected_symbols = set(top10pct["symbol"].tolist()[:take])
     selected = [q for q in pool if q["symbol"] in selected_symbols]
-    selected.sort(key=lambda x: x.get("circulating_market_cap", 1e18))
+    selected.sort(key=_market_cap_sort_value)
     selected = selected[:take]
     logger.info("[MS池] 候选 %d → 前10%% %d → 选中 %d", len(pool), len(top10pct), len(selected))
     return selected
@@ -108,7 +125,7 @@ def _pool_peg(candidates: list[dict], take: int = 5) -> list[dict]:
     top20pct = pool[:max(1, len(pool) // 5)]
     top20pct.sort(key=lambda x: x["turnover_ratio"])
     top50pct = top20pct[:max(1, len(top20pct) // 2)]
-    top50pct.sort(key=lambda x: x.get("circulating_market_cap", 1e18))
+    top50pct.sort(key=_market_cap_sort_value)
 
     selected = top50pct[:take]
     logger.info(
@@ -152,7 +169,18 @@ def generate_target_pool_from_quotes(
             seen.add(q["symbol"])
             union_list.append(q)
 
-    union_list.sort(key=lambda x: x.get("circulating_market_cap", 1e18))
+    if _is_basic_source(all_quotes):
+        pool = sorted(
+            candidates,
+            key=lambda x: (
+                -float(x.get("change_pct") or 0.0),
+                _market_cap_sort_value(x),
+            ),
+        )
+        union_list = pool[: max(pool_size * 2, pool_size)]
+        logger.info("[选股] 使用基础行情兜底：按涨幅和成交额代理小市值排序")
+    else:
+        union_list.sort(key=_market_cap_sort_value)
     if blacklist:
         union_list = [q for q in union_list if q["symbol"] not in blacklist]
 
@@ -229,8 +257,9 @@ async def execute(session: AsyncSession, researcher: Researcher) -> int:
 
     now_shanghai = datetime.now(tz=ZoneInfo("Asia/Shanghai"))
     today_str = now_shanghai.strftime("%Y-%m-%d")
-    is_monday = now_shanghai.weekday() == 0
-    is_rotation_day = is_monday and _last_rotation_date.get(rid) != today_str
+    schedule_config = config.get("schedule", {})
+    rotation_weekdays = set(schedule_config.get("rotation_weekdays", DEFAULT_ROTATION_WEEKDAYS))
+    is_rotation_day = now_shanghai.weekday() in rotation_weekdays and _last_rotation_date.get(rid) != today_str
 
     acct_stmt = select(TradingAccount).where(TradingAccount.researcher_id == researcher.id)
     acct_result = await session.execute(acct_stmt)

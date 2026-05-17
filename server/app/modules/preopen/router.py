@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import get_optional_session
 from app.core.container import get_container
 from app.modules.preopen.schemas import (
     AiDigest,
@@ -31,7 +33,9 @@ service = PreopenService()
 
 
 @router.get("/all")
-async def preopen_all() -> ApiResponse[PreopenAllData]:
+async def preopen_all(
+    session: AsyncSession | None = Depends(get_optional_session),
+) -> ApiResponse[PreopenAllData]:
     """聚合接口 —— 一次请求返回盘前速览全量快照数据。"""
     redis = get_container().redis.get_client()
     (
@@ -53,6 +57,13 @@ async def preopen_all() -> ApiResponse[PreopenAllData]:
         load_snapshot_or_empty(redis, snapshots.STOCK_RANK_UP),
         load_snapshot_or_empty(redis, snapshots.STOCK_RANK_DOWN),
     )
+    if session is not None:
+        try:
+            trend_data = await service.async_get_trends(session)
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            trend_data = trend_data or service.get_trends()
     data = PreopenAllData(
         hot_news=hot_news_items,
         market_indicators=indicator_items,
@@ -95,7 +106,16 @@ async def anomalies() -> ApiResponse[AnomalyOverview]:
 
 
 @router.get("/trends")
-async def trends() -> ApiResponse[TrendOverview]:
+async def trends(
+    session: AsyncSession | None = Depends(get_optional_session),
+) -> ApiResponse[TrendOverview]:
+    if session is not None:
+        try:
+            data = await service.async_get_trends(session)
+            await session.commit()
+            return ApiResponse(data=data)
+        except Exception:
+            await session.rollback()
     redis = get_container().redis.get_client()
     data = await load_snapshot_or_empty(redis, snapshots.TRENDS)
     return ApiResponse(data=data)

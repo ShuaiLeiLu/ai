@@ -191,6 +191,20 @@ async def _snapshot_trading_accounts(db: DatabaseFactory) -> None:
         logger.exception("[调度器] 模拟盘账户快照生成异常")
 
 
+async def _snapshot_preopen_market(db: DatabaseFactory) -> None:
+    """为盘前趋势生成或更新当天市场结构快照。"""
+    from app.modules.preopen.service import PreopenService
+
+    logger.info("[调度器] 开始生成盘前市场快照...")
+    try:
+        async with db.session_factory() as session:
+            await PreopenService().async_record_market_snapshot(session)
+            await session.commit()
+        logger.info("[调度器] 盘前市场快照生成完成")
+    except Exception:
+        logger.exception("[调度器] 盘前市场快照生成异常")
+
+
 def _build_task_trigger(task: OrchestrationTask) -> Any:
     config = task.schedule_config or {}
     timezone = "Asia/Shanghai"
@@ -343,6 +357,27 @@ def start_scheduler(db: DatabaseFactory, redis: RedisFactory | None = None) -> A
         args=[db],
         id="snapshot_trading_accounts",
         name="生成模拟盘账户快照",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+
+    _scheduler.add_job(
+        _snapshot_preopen_market,
+        trigger=CronTrigger(hour=9, minute=20, day_of_week="mon-fri", timezone="Asia/Shanghai"),
+        args=[db],
+        id="snapshot_preopen_market_morning",
+        name="生成盘前市场快照",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    _scheduler.add_job(
+        _snapshot_preopen_market,
+        trigger=CronTrigger(hour=15, minute=10, day_of_week="mon-fri", timezone="Asia/Shanghai"),
+        args=[db],
+        id="snapshot_preopen_market_close",
+        name="更新收盘市场快照",
         replace_existing=True,
         max_instances=1,
         coalesce=True,

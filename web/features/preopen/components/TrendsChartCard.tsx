@@ -80,6 +80,11 @@ export function TrendsChartCard() {
           />
         }
       >
+        {data?.window_days === 1 && (
+          <div className="mb-2 text-xs text-slate-400">
+            当前仅展示最新真实快照；多日趋势需等待每日快照沉淀。
+          </div>
+        )}
         <ReactECharts option={chartOpt} style={{ height: 200 }} notMerge />
       </PageCard>
     </StateWrapper>

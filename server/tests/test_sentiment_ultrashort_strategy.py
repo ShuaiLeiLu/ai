@@ -4,9 +4,11 @@ import pandas as pd
 from app.engine.strategies.sentiment_ultrashort import (
     _calculate_sentiment_score,
     _enrich_quotes_with_mainline_industries,
+    _gen_sentiment_daily_summary,
     _is_main_board_normal_stock,
     _select_halfway_targets,
     _sort_breakout_candidates,
+    SentimentScore,
 )
 from app.integrations.akshare.client import LimitUpStock
 
@@ -145,3 +147,72 @@ def test_halfway_targets_use_enriched_mainline_industry(monkeypatch) -> None:
 
     assert enriched[0]["industry"] == "新能源"
     assert [target["symbol"] for target in targets] == ["600010"]
+
+
+def test_halfway_targets_records_rejected_candidates() -> None:
+    audit: list[dict[str, str]] = []
+    config = {
+        "filters": {
+            "min_circulating_market_cap": 2_000_000_000,
+            "max_circulating_market_cap": 15_000_000_000,
+            "min_daily_amount": 100_000_000,
+            "min_turnover_ratio": 5,
+            "max_turnover_ratio": 25,
+        },
+        "halfway": {"start": "09:40", "end": "10:30", "min_change_pct": 5, "max_change_pct": 8},
+        "topic_confirmation": {"halfway_min_follow_limit_up": 2},
+    }
+
+    targets = _select_halfway_targets(
+        all_quotes=[
+            {
+                "symbol": "600012",
+                "name": "题材不足",
+                "industry": "冷门",
+                "change_pct": 6.2,
+                "amount": 200_000_000,
+                "turnover_ratio": 10,
+                "circulating_market_cap": 5_000_000_000,
+            }
+        ],
+        today_limit_counts={"冷门": 1},
+        config=config,
+        now_shanghai=pd.Timestamp("2026-04-24 10:00:00").to_pydatetime(),
+        audit=audit,
+    )
+
+    assert targets == []
+    assert audit[0]["stage"] == "半路"
+    assert "题材确认不足" in audit[0]["reason"]
+
+
+def test_sentiment_summary_lists_why_no_buy() -> None:
+    content = _gen_sentiment_daily_summary(
+        score=SentimentScore(total=42.0, stage="launch", details={}),
+        meta={
+            "limit_up_pool": [],
+            "limit_down_pool": [],
+            "yesterday_premium_pct": 0.0,
+            "today_height": 0,
+            "recent_height": 0,
+            "break_rate": 0.0,
+        },
+        sell_count=0,
+        buy_count=0,
+        daily_pnl=0,
+        total_asset=1_000_000,
+        available_cash=1_000_000,
+        hold_names=[],
+        buy_audit=[
+            {
+                "stage": "半路",
+                "symbol": "600012",
+                "name": "题材不足",
+                "reason": "题材确认不足：冷门 涨停少于 2 家",
+            }
+        ],
+    )
+
+    assert "## 为什么没买" in content
+    assert "题材不足(600012)" in content
+    assert "题材确认不足" in content

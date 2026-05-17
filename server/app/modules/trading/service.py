@@ -1350,13 +1350,32 @@ class TradingService:
         pos_repo = PositionRepository(session)
         researcher = await self._load_researcher_model(session, payload.researcher_id)
 
+        # ── 行级锁：SELECT ... FOR UPDATE 防止并发下单竞态 ──
         acc = await acct_repo.get_by_user_researcher(user_id, payload.researcher_id)
         if not acc:
             acc = await acct_repo.get_by_researcher(payload.researcher_id)
         if not acc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="模拟账户不存在")
 
+        # 对账户加排他锁，确保同一账户的并发下单串行执行
+        lock_stmt = (
+            select(AccountModel)
+            .where(AccountModel.id == acc.id)
+            .with_for_update()
+        )
+        lock_result = await session.execute(lock_stmt)
+        acc = lock_result.scalar_one()
+
+        # 对持仓也加排他锁（如果存在），避免同一持仓并发修改
         existing = await pos_repo.get_by_account_symbol(acc.id, payload.symbol)
+        if existing is not None:
+            pos_lock_stmt = (
+                select(PositionModel)
+                .where(PositionModel.id == existing.id)
+                .with_for_update()
+            )
+            pos_lock_result = await session.execute(pos_lock_stmt)
+            existing = pos_lock_result.scalar_one_or_none()
         cost_price_before = float(existing.cost_price) if existing else None
         today_buy_quantities = await self._load_today_buy_quantities(session, acc.id)
 

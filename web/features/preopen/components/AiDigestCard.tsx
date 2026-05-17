@@ -69,14 +69,14 @@ export function AiDigestCard() {
             <Text strong className="text-sm leading-5">{data.headline}</Text>
           </div>
 
-          <ul className="list-none space-y-1.5 pl-0">
-            {data.key_points.map((pt, i) => (
-              <li key={i} className="flex items-start gap-1.5 text-[13px] leading-5 text-slate-600">
-                <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand-400" />
-                {pt}
-              </li>
-            ))}
-          </ul>
+          <DigestList title="市场结构" items={data.key_points} tone="brand" />
+          <DigestList title="新闻驱动" items={data.news_drivers ?? []} tone="amber" />
+          <div className="grid gap-2 sm:grid-cols-2">
+            <DigestList title="机会方向" items={data.opportunity_sectors ?? []} tone="rose" compact />
+            <DigestList title="风险方向" items={data.risk_sectors ?? []} tone="green" compact />
+          </div>
+          <DigestList title="盘中观察" items={data.intraday_watch ?? []} tone="slate" />
+          <DigestList title="模拟盘预案" items={data.simulation_plan ?? []} tone="purple" />
 
           <div className="text-[11px] text-slate-400">
             生成时间：{new Date(data.generated_at).toLocaleString('zh-CN')}
@@ -84,5 +84,41 @@ export function AiDigestCard() {
         </div>
       )}
     </PageCard>
+  );
+}
+
+function DigestList({
+  title,
+  items,
+  tone,
+  compact = false,
+}: {
+  title: string;
+  items: string[];
+  tone: 'brand' | 'amber' | 'rose' | 'green' | 'slate' | 'purple';
+  compact?: boolean;
+}) {
+  if (!items.length) return null;
+  const dotClass = {
+    brand: 'bg-brand-400',
+    amber: 'bg-amber-400',
+    rose: 'bg-rose-400',
+    green: 'bg-emerald-400',
+    slate: 'bg-slate-400',
+    purple: 'bg-violet-400',
+  }[tone];
+
+  return (
+    <div className={compact ? 'rounded-md bg-slate-50 px-2.5 py-2' : ''}>
+      <div className="mb-1 text-[11px] font-semibold text-slate-500">{title}</div>
+      <ul className="list-none space-y-1.5 pl-0">
+        {items.slice(0, compact ? 3 : 5).map((pt, i) => (
+          <li key={i} className="flex items-start gap-1.5 text-[13px] leading-5 text-slate-600">
+            <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${dotClass}`} />
+            <span>{pt}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

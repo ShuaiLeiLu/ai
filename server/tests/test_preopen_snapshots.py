@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from types import SimpleNamespace
 
 import pytest
 
 from app.modules.preopen import snapshots
+from app.modules.preopen.service import PreopenService
 from app.modules.preopen.schemas import HotNewsItem
 from app.modules.preopen.snapshot_cache import load_snapshot, save_snapshot
 from app.modules.preopen.snapshot_refresher import RefreshTarget, _refresh_target
@@ -86,3 +88,71 @@ async def test_refresh_target_keeps_last_snapshot_when_required_list_is_empty() 
 
     assert refreshed is False
     assert loaded == [old_item]
+
+
+def test_ai_digest_parser_accepts_richer_workflow_fields() -> None:
+    reply = json.dumps(
+        {
+            "headline": "新闻催化科技线升温",
+            "sentiment": "bullish",
+            "key_points": ["涨停家数回升", "连板高度打开"],
+            "news_drivers": ["算力订单落地"],
+            "opportunity_sectors": ["算力", "半导体"],
+            "risk_sectors": ["高位地产"],
+            "intraday_watch": ["观察算力涨停是否扩散"],
+            "simulation_plan": ["只在板块共振时开仓"],
+        },
+        ensure_ascii=False,
+    )
+
+    digest = PreopenService._parse_ai_digest_response(reply)
+
+    assert digest is not None
+    assert digest.news_drivers == ["算力订单落地"]
+    assert digest.opportunity_sectors == ["算力", "半导体"]
+    assert digest.intraday_watch == ["观察算力涨停是否扩散"]
+
+
+def test_trends_fallback_only_returns_real_latest_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "app.modules.preopen.service.get_limit_up_pool",
+        lambda: [
+            type("LimitItem", (), {"consecutive": 2})(),
+            type("LimitItem", (), {"consecutive": 1})(),
+        ],
+    )
+    monkeypatch.setattr("app.modules.preopen.service.get_limit_down_pool", lambda: [object()])
+
+    trends = PreopenService().get_trends()
+
+    assert trends.window_days == 1
+    assert all(len(series.points) == 1 for series in trends.series)
+    assert trends.series[0].points[0].value == 2
+    assert trends.series[1].points[0].value == 1
+    assert trends.series[2].points[0].value == 1
+
+
+def test_trends_builds_real_multi_day_series_from_snapshots() -> None:
+    rows = [
+        SimpleNamespace(
+            trade_date=date(2026, 4, 29),
+            limit_up_count=45,
+            limit_down_count=8,
+            consecutive_limit_up_count=12,
+        ),
+        SimpleNamespace(
+            trade_date=date(2026, 4, 30),
+            limit_up_count=52,
+            limit_down_count=5,
+            consecutive_limit_up_count=18,
+        ),
+    ]
+
+    trends = PreopenService._trend_overview_from_snapshots(rows, requested_days=15)  # type: ignore[arg-type]
+
+    assert trends.window_days == 2
+    assert [point.value for point in trends.series[0].points] == [45, 52]
+    assert [point.trade_date for point in trends.series[1].points] == [
+        date(2026, 4, 29),
+        date(2026, 4, 30),
+    ]
