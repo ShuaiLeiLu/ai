@@ -1,0 +1,62 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_HOST: ${{ secrets.TENCENT_CLOUD_HOST }}
+      DEPLOY_USER: ${{ secrets.TENCENT_CLOUD_USER }}
+      DEPLOY_PATH: ${{ secrets.TENCENT_CLOUD_DEPLOY_PATH }}
+      DEPLOY_GITHUB_TOKEN: ${{ secrets.DEPLOY_GITHUB_TOKEN }}
+      PRODUCTION_ENV_FILE: ${{ secrets.PRODUCTION_ENV_FILE }}
+
+    steps:
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.TENCENT_CLOUD_SSH_KEY }}" > ~/.ssh/tencent_cloud_ed25519
+          chmod 600 ~/.ssh/tencent_cloud_ed25519
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Sync repository on server
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/tencent_cloud_ed25519 "$DEPLOY_USER@$DEPLOY_HOST" \
+            "PROJECT_DIR='$DEPLOY_PATH' REPO_URL='https://github.com/ShuaiLeiLu/ai.git' GIT_AUTH_URL='https://x-access-token:${DEPLOY_GITHUB_TOKEN}@github.com/ShuaiLeiLu/ai.git' bash -s" <<'REMOTE'
+          set -euo pipefail
+          mkdir -p "$(dirname "$PROJECT_DIR")"
+          if [ ! -d "$PROJECT_DIR/.git" ]; then
+            git clone "$GIT_AUTH_URL" "$PROJECT_DIR"
+          fi
+          cd "$PROJECT_DIR"
+          git remote set-url origin "$REPO_URL"
+          git fetch "$GIT_AUTH_URL" main
+          git reset --hard FETCH_HEAD
+          mkdir -p deploy
+          REMOTE
+
+      - name: Upload production environment
+        run: |
+          set -euo pipefail
+          tmp_env="$(mktemp)"
+          printf '%s\n' "$PRODUCTION_ENV_FILE" > "$tmp_env"
+          scp -i ~/.ssh/tencent_cloud_ed25519 "$tmp_env" "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/deploy/.env.production"
+          rm -f "$tmp_env"
+          ssh -i ~/.ssh/tencent_cloud_ed25519 "$DEPLOY_USER@$DEPLOY_HOST" "chmod 600 '$DEPLOY_PATH/deploy/.env.production'"
+
+      - name: Rebuild and restart
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/tencent_cloud_ed25519 "$DEPLOY_USER@$DEPLOY_HOST" \
+            "PROJECT_DIR='$DEPLOY_PATH' BRANCH='main' bash '$DEPLOY_PATH/deploy/deploy.sh' --no-pull"

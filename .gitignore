@@ -18,9 +18,23 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 
-# Environment
-.env.local
-.env.*.local
+# Environment / secrets
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+!.env.*.example
+!**/.env.*.example
+
+# Private keys / certificates
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
 
 # Build / runtime
 logs/
