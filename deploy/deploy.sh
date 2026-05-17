@@ -40,9 +40,29 @@ docker rm -f ai-api ai-web 2>/dev/null || true
 docker compose up -d api web
 
 echo "[5/5] 健康检查..."
-sleep 5
-curl -fsS http://127.0.0.1:8000/api/v1/health >/dev/null
-curl -fsS http://127.0.0.1:3000 >/dev/null
+for i in $(seq 1 30); do
+    if curl -fsS http://127.0.0.1:8000/api/v1/health >/dev/null; then
+        break
+    fi
+    if [ "$i" -eq 30 ]; then
+        echo "API 健康检查失败" >&2
+        docker logs --tail 120 ai-api >&2 || true
+        exit 1
+    fi
+    sleep 3
+done
+
+for i in $(seq 1 20); do
+    if curl -fsS http://127.0.0.1:3000 >/dev/null; then
+        break
+    fi
+    if [ "$i" -eq 20 ]; then
+        echo "Web 健康检查失败" >&2
+        docker logs --tail 120 ai-web >&2 || true
+        exit 1
+    fi
+    sleep 3
+done
 docker image prune -f >/dev/null || true
 
 echo ""
