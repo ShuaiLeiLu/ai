@@ -1,3 +1,4 @@
+export * from './MarketHero';
 export * from './HotNewsCard';
 export * from './AiDigestCard';
 export * from './MarketIndicatorsCard';

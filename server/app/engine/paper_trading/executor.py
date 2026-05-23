@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.researcher import Researcher
 from app.models.trading import Position, TradeLog, TradeRecord, TradingAccount
 from app.modules.trading.reflection_skill import TradingReflectionSkill
-from app.modules.trading.rqalpha_adapter import (
+from app.modules.trading.paper_trading_engine import (
     ORDER_STATUS_FILLED,
     MarketSnapshot,
     compute_sellable_quantity,
@@ -162,6 +162,8 @@ async def do_sell(
             "available_cash": float(account.available_cash),
             "total_asset": float(account.available_cash + account.holding_value),
             "market_snapshot": market_snapshot,
+            "session": session,
+            "account_id": account.id,
         },
     )
     session.add(
@@ -179,6 +181,12 @@ async def do_sell(
 
     if execution.remove_position:
         await session.delete(pos)
+
+    await session.flush()
+    # 撮合完成后立即触发盯市,让 account.holding_value / total_asset / daily_pnl
+    # 即时反映本笔成交后的状态
+    from app.modules.trading.service import TradingService
+    await TradingService()._refresh_account_snapshot(session, account, cache_only=True)
 
     logger.info(
         "  [卖出] %s %s %d股 @ %.2f (%s)",
@@ -296,6 +304,8 @@ async def do_buy(
             "available_cash": float(account.available_cash),
             "total_asset": float(account.available_cash + account.holding_value),
             "market_snapshot": market_snapshot,
+            "session": session,
+            "account_id": account.id,
         },
     )
     session.add(
@@ -310,6 +320,12 @@ async def do_buy(
             content=reflection,
         )
     )
+
+    await session.flush()
+    # 撮合完成后立即触发盯市,让 account.holding_value / total_asset / daily_pnl
+    # 即时反映本笔成交后的状态
+    from app.modules.trading.service import TradingService
+    await TradingService()._refresh_account_snapshot(session, account, cache_only=True)
 
     logger.info(
         "  [买入] %s %s %d股 @ %.2f",

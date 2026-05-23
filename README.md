@@ -208,9 +208,8 @@ docker compose up -d
 完整部署示例位于 `deploy/`：
 
 ```bash
-cd deploy
-cp .env.production.example .env.production
-docker compose -f docker-compose.yml up -d --build
+cp deploy/.env.production.example deploy/.env.production
+PROJECT_DIR="$(pwd)" deploy/deploy.sh --no-pull
 ```
 
 生产环境需要特别确认：
@@ -219,6 +218,7 @@ docker compose -f docker-compose.yml up -d --build
 - `DEBUG=false`。
 - `DATABASE_URL`、`REDIS_URL`、`OPENAI_*`、`S3_*` 使用真实配置。
 - 不要把真实 `.env`、API Key 或数据库密码提交到 Git。
+- 自动发布脚本默认会构建镜像、启动 `api`/`web`、执行 Alembic 迁移并做健康检查；如需跳过迁移可加 `--no-migrate`。
 
 ## 数据与调度说明
 

@@ -53,6 +53,17 @@ class Settings(BaseSettings):
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
     openai_model: str | None = Field(default=None, alias="OPENAI_MODEL")
 
+    # Skill 级 LLM profile 配置:数据型 skill 用便宜模型,综合型 skill 用强模型。
+    # 任一字段缺省时回退到 default(即上方 openai_* 配置)。
+    # 支持跨供应商:例如 data 走 deepseek,synthesis 走 openai。
+    llm_data_base_url: str | None = Field(default=None, alias="LLM_DATA_BASE_URL")
+    llm_data_api_key: str | None = Field(default=None, alias="LLM_DATA_API_KEY")
+    llm_data_model: str | None = Field(default=None, alias="LLM_DATA_MODEL")
+
+    llm_synthesis_base_url: str | None = Field(default=None, alias="LLM_SYNTHESIS_BASE_URL")
+    llm_synthesis_api_key: str | None = Field(default=None, alias="LLM_SYNTHESIS_API_KEY")
+    llm_synthesis_model: str | None = Field(default=None, alias="LLM_SYNTHESIS_MODEL")
+
     jin10_mcp_server_url: str = Field(
         default="https://mcp.jin10.com/mcp",
         alias="JIN10_MCP_SERVER_URL",

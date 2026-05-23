@@ -11,7 +11,9 @@
 """
 from __future__ import annotations
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
+from datetime import date
+
+from sqlalchemy import Boolean, Date, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -87,3 +89,37 @@ class ResearcherHire(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="hired")
 
     researcher = relationship("Researcher", back_populates="hires")
+
+
+class ResearcherThesisLog(Base, TimestampMixin):
+    """研究员每日判断累积评分卡。
+
+    main_thesis skill 生成主线判断后写入一条;
+    T+1 凌晨异步任务对照实际市场,回填 actual_result 和 correctness。
+    """
+
+    __tablename__ = "researcher_thesis_logs"
+    __table_args__ = (
+        Index(
+            "ix_researcher_thesis_logs_researcher_date",
+            "researcher_id", "trade_date",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    researcher_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("researchers.id"), nullable=False, index=True,
+    )
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+
+    direction_call: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    key_drivers: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    falsification_signals: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list,
+    )
+    # 由异步评估任务回填:T+1 / T+5 实际表现
+    actual_result: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    # correct / partial / wrong / pending
+    correctness: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending",
+    )

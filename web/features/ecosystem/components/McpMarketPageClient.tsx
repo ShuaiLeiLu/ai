@@ -1,116 +1,223 @@
 /**
- * MCP市场页面
+ * MCP 市场页面
  *
- * 属于“极睿实验室”子页面之一，路由：/workstation/mcp-market
- * - 筛选栏：搜索框 + Segmented（全部/已授权/未授权）
- * - 热门推荐区：已授权 MCP 服务卡片
- * - 全部 MCP 服务器：网格卡片列表
+ * 属于"极睿实验室"子页面之一，路由：/workstation/mcp-market
+ * 接入外部工具与数据 · 已启用 X / 可用 N
  *
  * 数据流：useMcpServers() hook 拉取后端接口
  */
 'use client';
 
-import { useState } from 'react';
-import { Avatar, Button, Input, Segmented, Spin, Tag, Typography } from 'antd';
-import { ApiOutlined, SearchOutlined } from '@ant-design/icons';
+import { useMemo, useState } from 'react';
+import { Input, Segmented, Spin } from 'antd';
+import { SearchOutlined } from '@ant-design/icons';
 
+import { SectionHeading } from '@/components/ui/section-heading';
 import { useMcpServers } from '@/features/ecosystem/hooks';
 import type { McpServerItem } from '@/types/ecosystem';
 
-/** 授权状态筛选枚举 */
 type McpFilter = 'all' | 'connected' | 'disconnected';
 
-/** 单个 MCP 服务卡片：图标 + 名称 + 授权状态 + 描述 + 操作按钮 */
+/** 提供商 → 品牌色 / 缩写 / icon 文本 */
+interface BrandStyle {
+  bg: string;
+  fg: string;
+  abbr: string;
+}
+
+const BRAND_MAP: Array<{ test: RegExp; brand: BrandStyle }> = [
+  { test: /同花顺|ths|10jqka/i, brand: { bg: '#c0362c', fg: '#ffffff', abbr: '同' } },
+  { test: /雪球|xueqiu|snowball/i, brand: { bg: '#1d4a34', fg: '#ffffff', abbr: '雪' } },
+  { test: /wind|万得/i, brand: { bg: '#c89a3a', fg: '#ffffff', abbr: 'W' } },
+  { test: /akshare|ak-?share/i, brand: { bg: '#5d564b', fg: '#ffffff', abbr: 'AK' } },
+  { test: /东方财富|eastmoney/i, brand: { bg: '#3f9a67', fg: '#ffffff', abbr: '东' } },
+  { test: /财联社|cls/i, brand: { bg: '#d8453a', fg: '#ffffff', abbr: '财' } },
+  { test: /自建|私有|custom|self/i, brand: { bg: '#4a443a', fg: '#ffffff', abbr: '私' } },
+];
+
+function pickBrand(name: string): BrandStyle {
+  for (const { test, brand } of BRAND_MAP) {
+    if (test.test(name)) return brand;
+  }
+  // fallback —— 用名称首字
+  return { bg: '#1d4a34', fg: '#ffffff', abbr: name.slice(0, 1) || 'M' };
+}
+
+/** 派生数据源类型：免费 / VIP / 自建 */
+function deriveTier(item: McpServerItem): 'free' | 'vip' | 'custom' {
+  if (/wind|level2|vip/i.test(item.name)) return 'vip';
+  if (/自建|私有|custom|self/i.test(item.name)) return 'custom';
+  return 'free';
+}
+
+/** 根据 category 派生标签 chips */
+function deriveCapabilities(item: McpServerItem): string[] {
+  const cat = (item.category || '').toLowerCase();
+  if (cat.includes('market') || cat.includes('行情')) return ['实时行情', 'K 线', '盘口'];
+  if (cat.includes('news') || cat.includes('公告')) return ['公告', '新闻', '订阅'];
+  if (cat.includes('finance') || cat.includes('财报')) return ['财报', '指标', '估值'];
+  return ['通用', '接口'];
+}
+
+/** 单个 MCP 卡 */
 function McpCard({ item }: { item: McpServerItem }) {
+  const brand = useMemo(() => pickBrand(item.name), [item.name]);
+  const tier = useMemo(() => deriveTier(item), [item]);
+  const caps = useMemo(() => deriveCapabilities(item), [item]);
+
+  let statusText: string;
+  let statusCls: string;
+  if (item.connected) {
+    statusText = '已启用';
+    statusCls = 'text-down-600';
+  } else if (tier === 'vip') {
+    statusText = 'VIP 套餐';
+    statusCls = 'text-gold-600';
+  } else if (tier === 'custom') {
+    statusText = '未配置';
+    statusCls = 'text-ink-400';
+  } else {
+    statusText = '未启用';
+    statusCls = 'text-ink-400';
+  }
+
+  // 描述派生
+  const description =
+    item.category === 'market-data'
+      ? '提供实时行情数据、K 线、Level2 等市场数据接入能力'
+      : item.category === 'news'
+        ? '提供公告全文检索、关键词订阅等信息检索能力'
+        : `${item.category} · 标准 MCP 数据源接入`;
+
+  // 行动按钮
+  let actionEl: React.ReactNode;
+  if (item.connected) {
+    actionEl = (
+      <button
+        type="button"
+        className="w-full rounded-lg border border-ink-50 bg-ink-25 px-3 py-2 text-[12.5px] font-medium text-ink-600"
+      >
+        已启用 · 管理
+      </button>
+    );
+  } else if (tier === 'vip') {
+    actionEl = (
+      <button
+        type="button"
+        className="w-full rounded-lg bg-gradient-to-r from-gold-400 to-gold-600 px-3 py-2 text-[12.5px] font-medium text-white shadow-gold hover:from-gold-500 hover:to-gold-700"
+      >
+        升级解锁
+      </button>
+    );
+  } else if (tier === 'custom') {
+    actionEl = (
+      <button
+        type="button"
+        className="w-full rounded-lg border border-ink-50 bg-white px-3 py-2 text-[12.5px] font-medium text-ink-700 hover:border-brand-600 hover:text-brand-600"
+      >
+        配置
+      </button>
+    );
+  } else {
+    actionEl = (
+      <button
+        type="button"
+        className="w-full rounded-lg bg-brand-600 px-3 py-2 text-[12.5px] font-medium text-white shadow-brand hover:bg-brand-700"
+      >
+        + 接入
+      </button>
+    );
+  }
+
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-5 transition-shadow hover:shadow-md">
-      <div className="mb-3 flex items-center gap-3">
-        <Avatar
-          size={40}
-          icon={<ApiOutlined />}
-          className="shrink-0"
-          style={{ backgroundColor: item.connected ? '#f3f0ff' : '#f1f5f9', color: item.connected ? '#7c3aed' : '#94a3b8' }}
-        />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="truncate font-semibold">{item.name}</span>
-            {item.connected ? (
-              <Tag color="green" className="!text-xs">已授权</Tag>
-            ) : (
-              <Tag className="!text-xs">未授权</Tag>
-            )}
+    <div className="flex flex-col overflow-hidden rounded-2xl border border-ink-50 bg-white shadow-card transition-all hover:-translate-y-0.5 hover:shadow-card-lg">
+      <div className="flex flex-1 flex-col p-5">
+        {/* 头部 */}
+        <div className="mb-3 flex items-center gap-3">
+          <div
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-[14px] font-bold"
+            style={{ backgroundColor: brand.bg, color: brand.fg }}
+          >
+            {brand.abbr}
           </div>
-          <div className="text-xs text-slate-400">{item.category}</div>
+          <div className="min-w-0 flex-1">
+            <div className="serif truncate text-[14.5px] font-semibold text-ink-900">{item.name}</div>
+            <div className={['mt-0.5 text-[11.5px] font-medium', statusCls].join(' ')}>{statusText}</div>
+          </div>
         </div>
+
+        {/* 描述 */}
+        <p className="mb-3 line-clamp-2 min-h-[32px] text-[12px] leading-relaxed text-ink-500">
+          {description}
+        </p>
+
+        {/* 能力 chips */}
+        <div className="mb-4 flex flex-wrap gap-1.5">
+          {caps.map((cap) => (
+            <span
+              key={cap}
+              className="rounded-md bg-ink-25 px-2 py-0.5 text-[10.5px] font-medium text-ink-600"
+            >
+              {cap}
+            </span>
+          ))}
+        </div>
+
+        {/* 操作 */}
+        <div className="mt-auto">{actionEl}</div>
       </div>
-      <Typography.Paragraph className="!mb-3 !text-sm !text-slate-500" ellipsis={{ rows: 2 }}>
-        {item.category === 'market-data'
-          ? '提供实时行情数据、K线、Level2等市场数据接入能力'
-          : '提供公告全文检索、关键词订阅等信息检索能力'}
-      </Typography.Paragraph>
-      {item.connected ? (
-        <Tag color="green" className="!text-xs">授权使用</Tag>
-      ) : (
-        <Button size="small" type="primary">授权接入</Button>
-      )}
     </div>
   );
 }
 
-/** MCP市场主组件 */
+/** MCP 市场主组件 */
 export function McpMarketPageClient() {
-  const [filter, setFilter] = useState<McpFilter>('all'); // 授权状态筛选
-  const [search, setSearch] = useState('');                // 搜索关键词
+  const [filter, setFilter] = useState<McpFilter>('all');
+  const [search, setSearch] = useState('');
   const { data, isLoading } = useMcpServers();
 
-  // 按授权状态 + 关键词过滤
-  const filtered = (data ?? [])
-    .filter((item) => {
-      if (filter === 'connected') return item.connected;
-      if (filter === 'disconnected') return !item.connected;
-      return true;
-    })
-    .filter((item) => (search ? item.name.includes(search) || item.category.includes(search) : true));
+  const list = data ?? [];
+  const enabledCount = list.filter((s) => s.connected).length;
 
-  const hotItems = (data ?? []).filter((s) => s.connected); // 热门推荐 = 已授权
+  const filtered = useMemo(() => {
+    return list
+      .filter((item) => {
+        if (filter === 'connected') return item.connected;
+        if (filter === 'disconnected') return !item.connected;
+        return true;
+      })
+      .filter((item) =>
+        search ? item.name.includes(search) || item.category.includes(search) : true,
+      );
+  }, [list, filter, search]);
 
   return (
-    <div>
-      {/* Header —— 移动端上下堆叠 */}
-      <div className="mb-6 space-y-3">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <Typography.Title level={4} className="!mb-1">
-              MCP市场
-            </Typography.Title>
-            <Typography.Text type="secondary">
-              发现和管理MCP服务器，让AI研究员获取实时数据能力
-            </Typography.Text>
-          </div>
-          <Button type="primary">接入MCP</Button>
-        </div>
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-          <Input
-            prefix={<SearchOutlined className="text-slate-400" />}
-            placeholder="搜索MCP服务器..."
-            className="w-full sm:!w-56"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            allowClear
+    <div className="space-y-5">
+      <SectionHeading
+        title="MCP 市场"
+        subtitle={`接入外部工具与数据 · 已启用 ${enabledCount} / 可用 ${list.length}`}
+        actions={
+          <Segmented
+            size="small"
+            value={filter}
+            onChange={(v) => setFilter(v as McpFilter)}
+            options={[
+              { label: '全部', value: 'all' },
+              { label: `已启用 ${enabledCount}`, value: 'connected' },
+              { label: `未启用 ${list.length - enabledCount}`, value: 'disconnected' },
+            ]}
           />
-          <div className="overflow-x-auto">
-            <Segmented
-              value={filter}
-              options={[
-                { label: '全部', value: 'all' },
-                { label: `已授权 (${(data ?? []).filter((s) => s.connected).length})`, value: 'connected' },
-                { label: `未授权 (${(data ?? []).filter((s) => !s.connected).length})`, value: 'disconnected' },
-              ]}
-              onChange={(v) => setFilter(v as McpFilter)}
-            />
-          </div>
-        </div>
-      </div>
+        }
+      />
+
+      <Input
+        prefix={<SearchOutlined className="text-ink-300" />}
+        placeholder="搜索 MCP 服务器…"
+        className="w-full sm:!w-72"
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        allowClear
+      />
 
       {isLoading && (
         <div className="flex justify-center py-24">
@@ -118,36 +225,17 @@ export function McpMarketPageClient() {
         </div>
       )}
 
-      {!isLoading && (
-        <div className="space-y-6">
-          {/* Hot Recommendations */}
-          {filter === 'all' && hotItems.length > 0 && (
-            <div>
-              <Typography.Title level={5} className="!mb-3">
-                🔥 热门推荐
-              </Typography.Title>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {hotItems.map((item) => (
-                  <McpCard key={item.server_id} item={item} />
-                ))}
-              </div>
-            </div>
-          )}
+      {!isLoading && filtered.length > 0 && (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {filtered.map((it) => (
+            <McpCard key={it.server_id} item={it} />
+          ))}
+        </div>
+      )}
 
-          {/* All */}
-          <div>
-            <Typography.Title level={5} className="!mb-3">
-              全部MCP服务器 ({filtered.length})
-            </Typography.Title>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {filtered.map((item) => (
-                <McpCard key={item.server_id} item={item} />
-              ))}
-            </div>
-            {filtered.length === 0 && (
-              <div className="py-16 text-center text-slate-400">暂无匹配的MCP服务</div>
-            )}
-          </div>
+      {!isLoading && filtered.length === 0 && (
+        <div className="rounded-2xl border border-dashed border-ink-50 bg-white py-24 text-center text-ink-400">
+          暂无匹配的 MCP 服务
         </div>
       )}
     </div>

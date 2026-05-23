@@ -37,11 +37,13 @@ export default function NewsAnalysisPage() {
   };
 
   return (
-    <div className="h-[calc(100vh-64px-40px)] overflow-hidden">
-      <div className="grid h-full grid-cols-12 gap-6">
-        {/* Left: News feed (Scrollable) */}
-        <div className="col-span-12 flex h-full flex-col gap-4 lg:col-span-8 overflow-hidden">
-          <div className="rounded-xl bg-white p-5 shadow-fintech border border-slate-100/50">
+    // 移动端：自然流式高度（避免与底部 TabBar 重叠）
+    // 桌面端：固定视口高度，左侧列表内滚动
+    <div className="lg:h-[calc(100vh-64px-40px)] lg:overflow-hidden">
+      <div className="grid grid-cols-12 gap-4 lg:h-full lg:gap-6">
+        {/* Left: News feed (桌面端内滚动 / 移动端自然流) */}
+        <div className="col-span-12 flex flex-col gap-4 lg:col-span-8 lg:h-full lg:overflow-hidden">
+          <div className="rounded-xl bg-white p-4 sm:p-5 shadow-fintech border border-slate-100/50">
             <div className="mb-4 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <div className="h-4 w-1 rounded-full bg-brand-500"></div>
@@ -53,16 +55,16 @@ export default function NewsAnalysisPage() {
             <FilterControls filters={filters} onFilterChange={handleFilterChange} />
           </div>
 
-          <div className="flex-1 rounded-xl bg-white shadow-fintech border border-slate-100/50 overflow-y-auto no-scrollbar">
+          <div className="rounded-xl bg-white shadow-fintech border border-slate-100/50 lg:flex-1 lg:overflow-y-auto no-scrollbar">
             <NewsFeed filters={filters} />
           </div>
         </div>
 
-        {/* Right: AI analysis + hot stocks (No internal scroll) */}
-        <div className="col-span-12 space-y-5 lg:col-span-4 pb-10">
+        {/* Right: AI analysis + hot stocks */}
+        <div className="col-span-12 space-y-4 lg:col-span-4 lg:space-y-5 lg:pb-10 lg:overflow-y-auto no-scrollbar">
           <AIPanels />
           <div className="rounded-xl bg-white shadow-fintech border border-slate-100/50 p-1">
-             <StockSummaryCard stockCode={filters.stock_code} />
+            <StockSummaryCard stockCode={filters.stock_code} />
           </div>
           <HotNewsList />
         </div>

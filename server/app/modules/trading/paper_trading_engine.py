@@ -1,30 +1,26 @@
-"""RQAlpha adapter for the local paper-trading engine.
+"""自研模拟盘撮合引擎。
 
-This module does not spin up the full RQAlpha runtime on every request.
-Instead it aligns the app's execution rules with RQAlpha's paper-trading
-concepts so the current FastAPI APIs can keep working while we migrate.
+历史背景:本模块曾命名为 rqalpha_adapter,但实际未真正接入 RQAlpha 运行时,
+只是借用了 ORDER_STATUS 常量名做命名对齐。2026-05 已彻底剥离 RQAlpha 依赖,
+撮合逻辑全部自实现,涵盖:
+  - A 股涨跌停限价校验
+  - T+1 可卖数量校验
+  - 佣金 / 印花税 / 过户费三项成本
+  - 加权成本价计算
+  - 现金 / 持仓 / 总资产联动
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
 
-try:
-    from rqalpha.const import ORDER_STATUS, RUN_TYPE
+# 订单状态常量(原对齐 RQAlpha 命名,保留字符串值以兼容前端展示)
+ORDER_STATUS_ACTIVE = "ACTIVE"
+ORDER_STATUS_CANCELLED = "CANCELLED"
+ORDER_STATUS_FILLED = "FILLED"
+ORDER_STATUS_REJECTED = "REJECTED"
 
-    ORDER_STATUS_ACTIVE = ORDER_STATUS.ACTIVE.value
-    ORDER_STATUS_CANCELLED = ORDER_STATUS.CANCELLED.value
-    ORDER_STATUS_FILLED = ORDER_STATUS.FILLED.value
-    ORDER_STATUS_REJECTED = ORDER_STATUS.REJECTED.value
-    RUN_TYPE_PAPER = RUN_TYPE.PAPER_TRADING.value
-except Exception:  # pragma: no cover - fallback only used when rqalpha is unavailable
-    ORDER_STATUS_ACTIVE = "ACTIVE"
-    ORDER_STATUS_CANCELLED = "CANCELLED"
-    ORDER_STATUS_FILLED = "FILLED"
-    ORDER_STATUS_REJECTED = "REJECTED"
-    RUN_TYPE_PAPER = "PAPER_TRADING"
-
-RQALPHA_ENGINE_NAME = f"rqalpha-adapter/{RUN_TYPE_PAPER.lower()}"
+PAPER_ENGINE_NAME = "paper-trading-engine/v2"
 
 
 @dataclass(slots=True)
@@ -44,7 +40,7 @@ class ExecutionResult:
     commission: float
     tax: float
     realized_pnl: float | None
-    engine: str = RQALPHA_ENGINE_NAME
+    engine: str = PAPER_ENGINE_NAME
     created_position: dict[str, Any] | None = None
     remove_position: bool = False
 
@@ -167,12 +163,24 @@ def execute_stock_order(
     limit_price: float,
     market: MarketSnapshot | None,
     sellable_quantity: int | None = None,
-    open_commission_rate: float,
-    close_commission_rate: float,
-    close_tax_rate: float,
-    min_commission: float,
+    # 兼容旧签名:这些参数现在忽略,统一从 AccountStateManager 取值
+    open_commission_rate: float | None = None,
+    close_commission_rate: float | None = None,
+    close_tax_rate: float | None = None,
+    min_commission: float | None = None,
 ) -> ExecutionResult:
-    """Mutate account/position using RQAlpha-like paper-trading rules."""
+    """模拟盘撮合:校验 → 定价 → 算费 → 写账户。
+
+    所有费用计算和账户字段写入统一走 AccountStateManager,避免多套口径。
+    Cost basis 是 fully-loaded:含买入端 commission + transfer_fee 平摊。
+    Realized pnl = (fill * qty - sell_commission - sell_tax - sell_transfer_fee)
+                   - cost_price * qty
+    """
+    from app.modules.trading.account_state import (
+        DEFAULT_SLIPPAGE_BPS,
+        AccountStateManager,
+    )
+
     position_quantity = int(getattr(existing_position, "quantity", 0) or 0)
     validation_error = _validate_lot_size(side, quantity, position_quantity, sellable_quantity)
     if validation_error:
@@ -187,8 +195,8 @@ def execute_stock_order(
             realized_pnl=None,
         )
 
-    status, fill_price, fill_message = _resolve_limit_fill(side, symbol, name, limit_price, market)
-    if status != ORDER_STATUS_FILLED or fill_price is None:
+    status, raw_fill_price, fill_message = _resolve_limit_fill(side, symbol, name, limit_price, market)
+    if status != ORDER_STATUS_FILLED or raw_fill_price is None:
         return ExecutionResult(
             status=status,
             message=fill_message,
@@ -200,17 +208,27 @@ def execute_stock_order(
             realized_pnl=None,
         )
 
-    amount = round(fill_price * quantity, 2)
-    current_price = round(float(market.price if market and market.price else fill_price), 4)
+    # 滑点模拟(买入按更不利价,卖出同理)
+    fill_price = AccountStateManager.apply_slippage(side, raw_fill_price)
+    if abs(fill_price - raw_fill_price) > 0.0001:
+        fill_message = (
+            f"{fill_message}|滑点 {DEFAULT_SLIPPAGE_BPS}bp 后成交价 {fill_price:.4f}"
+        )
+
+    current_price = round(
+        float(market.price if market and market.price else fill_price), 4,
+    )
 
     if side == "buy":
-        commission = round(max(amount * open_commission_rate, min_commission), 2)
-        total_cost = round(amount + commission, 2)
+        costs = AccountStateManager.calc_buy_costs(symbol, fill_price, quantity)
         available_cash = round(float(account.available_cash), 2)
-        if available_cash < total_cost:
+        if available_cash < costs.total_cost:
             return ExecutionResult(
                 status=ORDER_STATUS_REJECTED,
-                message=f"可用资金不足：需要 {total_cost:.2f}，当前 {available_cash:.2f}",
+                message=(
+                    f"可用资金不足:需要 {costs.total_cost:.2f},"
+                    f"当前 {available_cash:.2f}"
+                ),
                 filled_quantity=0,
                 fill_price=None,
                 amount=0.0,
@@ -219,22 +237,25 @@ def execute_stock_order(
                 realized_pnl=None,
             )
 
-        account.available_cash = round(available_cash - total_cost, 2)
-        account.holding_value = round(float(account.holding_value) + amount, 2)
-        account.daily_pnl = round(float(account.daily_pnl) - commission, 2)
+        # 1) 扣现金
+        AccountStateManager.apply_buy_to_cash(account, costs.total_cost)
 
+        # 2) 更新/新建持仓(fully-loaded cost)
         if existing_position is not None:
             new_quantity = int(existing_position.quantity) + quantity
-            new_cost = (
-                (float(existing_position.cost_price) * int(existing_position.quantity)) + total_cost
-            ) / new_quantity
+            new_cost = AccountStateManager.compute_avg_cost(
+                existing_quantity=int(existing_position.quantity),
+                existing_cost_price=float(existing_position.cost_price),
+                added_quantity=quantity,
+                added_total_cost=costs.total_cost,
+            )
             existing_position.quantity = new_quantity
-            existing_position.cost_price = round(new_cost, 4)
+            existing_position.cost_price = new_cost
             existing_position.current_price = current_price
             existing_position.pnl = round((current_price - new_cost) * new_quantity, 2)
             position_payload = None
         else:
-            unit_cost = round(total_cost / quantity, 4)
+            unit_cost = round(costs.total_cost / quantity, 4)
             position_payload = {
                 "symbol": symbol,
                 "name": name or symbol,
@@ -244,29 +265,36 @@ def execute_stock_order(
                 "pnl": round((current_price - unit_cost) * quantity, 2),
             }
 
+        # 3) holding_value / total_asset 由调用方在持仓 flush 后调用 mark_to_market 重算
+        #    daily_pnl 由调用方在事务末尾调用 recompute_daily_pnl 重算
         return ExecutionResult(
             status=ORDER_STATUS_FILLED,
-            message=f"买入成功：{symbol} {quantity}股 @ {fill_price:.2f}（{fill_message}）",
+            message=f"买入成功:{symbol} {quantity}股 @ {fill_price:.2f}（{fill_message}）",
             filled_quantity=quantity,
             fill_price=round(fill_price, 4),
-            amount=amount,
-            commission=commission,
+            amount=costs.amount,
+            commission=round(costs.commission + costs.transfer_fee, 2),
             tax=0.0,
-            realized_pnl=-commission,
+            realized_pnl=-round(costs.commission + costs.transfer_fee, 2),
             created_position=position_payload,
         )
 
-    commission = round(max(amount * close_commission_rate, min_commission), 2)
-    tax = round(amount * close_tax_rate, 2)
-    realized_pnl = round(
-        amount - commission - tax - float(existing_position.cost_price) * quantity,
-        2,
+    # ── 卖出 ──
+    costs = AccountStateManager.calc_sell_costs(symbol, fill_price, quantity)
+    cost_price = float(existing_position.cost_price)
+    realized_pnl = AccountStateManager.compute_realized_pnl(
+        fill_price=fill_price,
+        quantity=quantity,
+        cost_price=cost_price,
+        sell_commission=costs.commission,
+        sell_tax=costs.tax,
+        sell_transfer_fee=costs.transfer_fee,
     )
 
-    account.available_cash = round(float(account.available_cash) + amount - commission - tax, 2)
-    account.holding_value = round(float(account.holding_value) - amount, 2)
-    account.daily_pnl = round(float(account.daily_pnl) + realized_pnl, 2)
+    # 1) 加现金(净额)
+    AccountStateManager.apply_sell_to_cash(account, costs.net_proceeds)
 
+    # 2) 更新持仓数量
     remaining_quantity = int(existing_position.quantity) - quantity
     if remaining_quantity <= 0:
         remove_position = True
@@ -278,18 +306,18 @@ def execute_stock_order(
         existing_position.quantity = remaining_quantity
         existing_position.current_price = current_price
         existing_position.pnl = round(
-            (current_price - float(existing_position.cost_price)) * remaining_quantity,
-            2,
+            (current_price - cost_price) * remaining_quantity, 2,
         )
 
     return ExecutionResult(
         status=ORDER_STATUS_FILLED,
-        message=f"卖出成功：{symbol} {quantity}股 @ {fill_price:.2f}（{fill_message}）",
+        message=f"卖出成功:{symbol} {quantity}股 @ {fill_price:.2f}（{fill_message}）",
         filled_quantity=quantity,
         fill_price=round(fill_price, 4),
-        amount=amount,
-        commission=commission,
-        tax=tax,
+        amount=costs.amount,
+        # commission 字段对外暴露的是 commission + transfer_fee 之和,方便兼容
+        commission=round(costs.commission + costs.transfer_fee, 2),
+        tax=costs.tax,
         realized_pnl=realized_pnl,
         remove_position=remove_position,
     )

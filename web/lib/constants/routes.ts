@@ -4,7 +4,7 @@ export const routes = {
   workstation: '/workstation',
   // 核心模块
   aiResearcher: '/workstation/ai-researcher',
-  researcherMarket: '/workstation/researcher-market',
+  researcherMarket: '/workstation/talent-market',
   researcherEditor: '/workstation/researcher-editor',
   documents: '/workstation/documents',
   community: '/workstation/community',

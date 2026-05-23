@@ -91,6 +91,23 @@ class EquityPoint(SchemaModel):
     equity: float              # 当日权益
     benchmark: float = 0.0     # 基准（沪深300）收益率，暂未接入
 
+
+class EquityCurvePoint(SchemaModel):
+    """分钟/小时级权益曲线点(多粒度)。"""
+    timestamp: str             # ISO 8601(UTC)
+    total_asset: float
+    available_cash: float
+    holding_value: float
+    daily_pnl: float
+    benchmark: float = 0.0     # 沪深 300 同期归一化值(同量纲),1m/5m/1h 暂为 0
+
+
+class EquityCurveResponse(SchemaModel):
+    """多粒度权益曲线返回结构。"""
+    granularity: str           # 1m / 5m / 1h / 1d
+    account_id: str
+    points: list[EquityCurvePoint]
+
 class MonthlyReturn(SchemaModel):
     """月度收益"""
     month: str                 # YYYY-MM

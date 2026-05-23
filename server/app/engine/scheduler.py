@@ -137,6 +137,115 @@ async def _reset_daily_pnl(db: DatabaseFactory) -> None:
         logger.exception("[调度器] 重置 daily_pnl 异常")
 
 
+async def _run_preopen_ai_digest(db: DatabaseFactory) -> None:
+    """每日 08:30 自动生成盘前 ai-digest-v2,落库供前端读取。"""
+    from app.modules.preopen.skill_service import run_preopen_chain
+
+    logger.info("[调度器] 开始生成盘前 AI digest...")
+    try:
+        async with db.session_factory() as session:
+            result = await run_preopen_chain(session)
+            await session.commit()
+        logger.info(
+            "[调度器] 盘前 digest 完成,bias=%s",
+            result.get("bias", "-"),
+        )
+    except Exception:
+        logger.exception("[调度器] 盘前 digest 生成异常")
+
+
+async def _run_daily_review_all(db: DatabaseFactory) -> None:
+    """每日 16:00 对所有 active researcher 跑教练复盘。"""
+    from sqlalchemy import select
+
+    from app.models.researcher import Researcher
+    from app.modules.trading.skill_service import run_daily_review
+
+    logger.info("[调度器] 开始生成当日教练复盘...")
+    try:
+        async with db.session_factory() as session:
+            q = await session.execute(
+                select(Researcher.id).where(Researcher.status == "active")
+            )
+            researcher_ids = [row for row in q.scalars().all()]
+
+            done = 0
+            for rid in researcher_ids:
+                try:
+                    await run_daily_review(session, researcher_id=rid)
+                    done += 1
+                except Exception:
+                    logger.exception(
+                        "[调度器] 研究员 %s 复盘失败", rid,
+                    )
+            await session.commit()
+            logger.info(
+                "[调度器] 当日复盘完成,共 %d/%d 个研究员",
+                done, len(researcher_ids),
+            )
+    except Exception:
+        logger.exception("[调度器] 教练复盘批量任务异常")
+
+
+async def _backfill_thesis_log_actuals(db: DatabaseFactory) -> None:
+    """T+1 凌晨回填昨日 thesis_log 实际结果。
+
+    简化实现:基于昨日 PreopenAiDigest 的 bias 和今日大盘涨跌做对照。
+    详细评估留待 Phase 4 thesis_scorecard。
+    """
+    from datetime import timedelta as _td
+
+    from sqlalchemy import select
+
+    from app.integrations.akshare.client import get_index_daily_bars
+    from app.models.researcher import ResearcherThesisLog
+
+    logger.info("[调度器] 开始回填 thesis_log T+1 实际结果...")
+    try:
+        async with db.session_factory() as session:
+            today = _now_shanghai().date()
+            yesterday = today - _td(days=1)
+            sh_bars = get_index_daily_bars("sh000001", 2)
+            sh_chg = 0.0
+            if sh_bars and len(sh_bars) >= 2:
+                sh_chg = (
+                    (sh_bars[-1].close - sh_bars[-2].close)
+                    / sh_bars[-2].close * 100
+                )
+
+            q = await session.execute(
+                select(ResearcherThesisLog).where(
+                    ResearcherThesisLog.trade_date == yesterday,
+                    ResearcherThesisLog.correctness == "pending",
+                )
+            )
+            logs = list(q.scalars().all())
+            for log in logs:
+                actual = {
+                    "sh_change_pct_t+1": round(sh_chg, 2),
+                    "evaluated_at": today.isoformat(),
+                }
+                # 简单评估:bias 和大盘涨跌方向是否一致
+                bias = log.direction_call or ""
+                if bias == "bullish":
+                    log.correctness = "correct" if sh_chg > 0.5 else (
+                        "partial" if sh_chg > -0.5 else "wrong"
+                    )
+                elif bias == "bearish":
+                    log.correctness = "correct" if sh_chg < -0.5 else (
+                        "partial" if sh_chg < 0.5 else "wrong"
+                    )
+                else:
+                    log.correctness = (
+                        "correct" if abs(sh_chg) <= 0.5 else "partial"
+                    )
+                log.actual_result = actual
+            await session.commit()
+            logger.info("[调度器] thesis_log 回填完成,共 %d 条", len(logs))
+    except Exception:
+        logger.exception("[调度器] thesis_log 回填异常")
+
+
 async def _refresh_trading_quotes(db: DatabaseFactory, redis_factory: RedisFactory) -> None:
     """刷新当前持仓行情缓存，并用缓存结果更新模拟盘快照。"""
     from sqlalchemy import select
@@ -163,12 +272,98 @@ async def _refresh_trading_quotes(db: DatabaseFactory, redis_factory: RedisFacto
 
             service = TradingService()
             account_result = await session.execute(select(TradingAccount))
-            for account in account_result.scalars().all():
+            accounts = list(account_result.scalars().all())
+            for account in accounts:
                 await service._refresh_account_snapshot(session, account, cache_only=True)
+
+            # 分钟级权益快照(只在交易时段写)
+            await _persist_minute_snapshots(session, accounts)
+
             await session.commit()
             logger.info("[调度器] 行情缓存刷新完成：%d 只股票", len(symbols))
     except Exception:
         logger.exception("[调度器] 行情缓存刷新异常")
+
+
+async def _settle_pending_orders_job(db: DatabaseFactory) -> None:
+    """每 30 秒在交易时段扫描挂单池,把可成交的限价单撮合掉。"""
+    if not _is_trading_hours():
+        return
+    from app.modules.trading.pending_order_service import settle_pending_orders
+
+    try:
+        async with db.session_factory() as session:
+            result = await settle_pending_orders(session)
+            await session.commit()
+            if result["filled"]:
+                logger.info(
+                    "[挂单撮合] checked=%d filled=%d skipped=%d",
+                    result["checked"], result["filled"], result["skipped"],
+                )
+    except Exception:
+        logger.exception("[挂单撮合] 异常")
+
+
+async def _apply_corporate_actions_job(db: DatabaseFactory) -> None:
+    """凌晨 02:30 扫所有持仓 → 应用除权除息(现金分红 / 送转股)。"""
+    from app.modules.trading.corporate_action_service import (
+        apply_corporate_actions_for_today,
+    )
+
+    try:
+        async with db.session_factory() as session:
+            stats = await apply_corporate_actions_for_today(session)
+            await session.commit()
+            if stats["dividends_applied"] or stats["splits_applied"]:
+                logger.info(
+                    "[除权除息] 持仓扫描 %d 笔,现金分红 %d,送转 %d",
+                    stats["checked"], stats["dividends_applied"], stats["splits_applied"],
+                )
+    except Exception:
+        logger.exception("[除权除息] 异常")
+
+
+async def _expire_pending_orders_job(db: DatabaseFactory) -> None:
+    """收盘后(15:05)把所有未成交挂单标记为 EXPIRED。"""
+    from app.modules.trading.pending_order_service import expire_pending_orders
+
+    try:
+        async with db.session_factory() as session:
+            n = await expire_pending_orders(session)
+            await session.commit()
+            if n:
+                logger.info("[挂单过期] 标记 %d 笔 ACTIVE 挂单为 EXPIRED", n)
+    except Exception:
+        logger.exception("[挂单过期] 异常")
+
+
+async def _persist_minute_snapshots(session, accounts) -> None:
+    """把当前所有账户状态打一份分钟快照。
+
+    调用前提:accounts 的 holding_value / total_asset / daily_pnl 已经经过
+    _refresh_account_snapshot 盯市更新。本函数只负责落库。
+    """
+    from datetime import datetime as _dt
+    from uuid import uuid4
+
+    from app.models.trading import TradingAccountMinuteSnapshot
+
+    if not _is_trading_hours():
+        return
+
+    now = _now_shanghai().replace(second=0, microsecond=0)
+    snapshot_at = _dt.fromtimestamp(now.timestamp(), tz=now.tzinfo)
+    for account in accounts:
+        row = TradingAccountMinuteSnapshot(
+            id=f"tms_{uuid4().hex[:12]}",
+            account_id=account.id,
+            snapshot_at=snapshot_at,
+            total_asset=round(float(account.total_asset), 2),
+            available_cash=round(float(account.available_cash), 2),
+            holding_value=round(float(account.holding_value), 2),
+            daily_pnl=round(float(account.daily_pnl), 2),
+        )
+        session.add(row)
 
 
 async def _snapshot_trading_accounts(db: DatabaseFactory) -> None:
@@ -382,6 +577,39 @@ def start_scheduler(db: DatabaseFactory, redis: RedisFactory | None = None) -> A
         max_instances=1,
         coalesce=True,
     )
+    # Skill 框架:每个交易日 08:30 自动生成盘前 AI digest
+    _scheduler.add_job(
+        _run_preopen_ai_digest,
+        trigger=CronTrigger(hour=8, minute=30, day_of_week="mon-fri", timezone="Asia/Shanghai"),
+        args=[db],
+        id="preopen_ai_digest_v2",
+        name="盘前 AI digest v2 自动生成",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    # Skill 框架:每个交易日 16:00 对所有 active researcher 跑教练复盘
+    _scheduler.add_job(
+        _run_daily_review_all,
+        trigger=CronTrigger(hour=16, minute=0, day_of_week="mon-fri", timezone="Asia/Shanghai"),
+        args=[db],
+        id="daily_review_all",
+        name="盘后教练复盘(所有研究员)",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
+    # Skill 框架:T+1 凌晨 02:00 回填 thesis_log 实际结果
+    _scheduler.add_job(
+        _backfill_thesis_log_actuals,
+        trigger=CronTrigger(hour=2, minute=0, day_of_week="tue-sat", timezone="Asia/Shanghai"),
+        args=[db],
+        id="backfill_thesis_log_actuals",
+        name="T+1 回填 thesis_log",
+        replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+    )
 
     if redis is not None:
         _scheduler.add_job(
@@ -403,6 +631,42 @@ def start_scheduler(db: DatabaseFactory, redis: RedisFactory | None = None) -> A
             name="启动后首次刷新模拟盘行情缓存",
             replace_existing=True,
             max_instances=1,
+        )
+
+        # 挂单撮合循环:交易时段每 30 秒扫一次
+        _scheduler.add_job(
+            _settle_pending_orders_job,
+            trigger=IntervalTrigger(seconds=30, timezone="Asia/Shanghai"),
+            args=[db],
+            id="settle_pending_orders",
+            name="挂单池盘中撮合",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        # 收盘后挂单过期:每天 15:05
+        _scheduler.add_job(
+            _expire_pending_orders_job,
+            trigger=CronTrigger(
+                day_of_week="mon-fri", hour=15, minute=5,
+                timezone="Asia/Shanghai",
+            ),
+            args=[db],
+            id="expire_pending_orders",
+            name="挂单过期清理",
+            replace_existing=True,
+        )
+        # 除权除息自动调仓:每天 02:30
+        _scheduler.add_job(
+            _apply_corporate_actions_job,
+            trigger=CronTrigger(
+                hour=2, minute=30,
+                timezone="Asia/Shanghai",
+            ),
+            args=[db],
+            id="apply_corporate_actions",
+            name="除权除息自动调仓",
+            replace_existing=True,
         )
 
         from app.modules.preopen.snapshot_refresher import PREOPEN_REFRESH_GROUPS, refresh_preopen_group

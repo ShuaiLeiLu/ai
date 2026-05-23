@@ -40,6 +40,7 @@ import {
 } from '@ant-design/icons';
 
 import { PageCard } from '@/components/ui/page-card';
+import { SectionHeading } from '@/components/ui/section-heading';
 import { useWorkbenchOverview } from '@/features/researcher-workbench/hooks';
 import { useGenerateTradeReflection, useTradingLogsWhenEnabled, useTradingPortfolio } from '@/features/trading/hooks';
 import { routes } from '@/lib/constants/routes';
@@ -58,9 +59,9 @@ const AVATAR_MAP: Record<string, string> = {
 
 /** 研究员头像背景色映射 */
 const AVATAR_BG_MAP: Record<string, string> = {
-  '阿平': 'bg-orange-100',
-  '阿发': 'bg-purple-100',
-  '阿龙': 'bg-blue-100',
+  '阿平': 'bg-up-50',
+  '阿发': 'bg-brand-50',
+  '阿龙': 'bg-down-50',
 };
 
 /** 根据研究员名称获取头像路径 */
@@ -81,8 +82,8 @@ function getAvatarBg(name: string): string {
 
 /** 根据收益正负返回对应的 Tailwind 文字色 */
 function yieldColor(value: number) {
-  if (value > 0) return 'text-rose-500';
-  if (value < 0) return 'text-emerald-600';
+  if (value > 0) return 'text-up-500';
+  if (value < 0) return 'text-down-600';
   return 'text-slate-500';
 }
 
@@ -200,7 +201,7 @@ function SidePanel({
           onClick={() => onSelect(null)}
           className={`flex w-full items-center gap-2.5 rounded-md border px-3 py-2.5 text-left text-sm transition-colors ${
             activeId === null
-              ? 'border-amber-200 bg-amber-50 text-amber-700 font-medium'
+              ? 'border-amber-200 bg-gold-50 text-gold-600 font-medium'
               : 'border-transparent text-slate-600 hover:bg-slate-50'
           }`}
         >
@@ -230,7 +231,7 @@ function SidePanel({
                 type="button"
                 onClick={() => onSelect(r.researcher_id)}
                 className={`mb-1 flex w-full items-center gap-2.5 rounded-md border px-3 py-2.5 text-left transition-colors ${
-                  active ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-transparent hover:bg-slate-50'
+                  active ? 'border-amber-200 bg-gold-50 text-gold-600' : 'border-transparent hover:bg-slate-50'
                 }`}
               >
                 {/* 彩色机器人头像 */}
@@ -406,10 +407,10 @@ function HotDocumentsSection({
         <div className="flex gap-4 overflow-x-auto pb-1">
           {documents.slice(0, 8).map((doc, index) => {
             const accents = [
-              'bg-rose-50 text-rose-500',
+              'bg-rose-50 text-up-500',
               'bg-blue-50 text-blue-500',
-              'bg-emerald-50 text-emerald-500',
-              'bg-amber-50 text-amber-500',
+              'bg-emerald-50 text-down-500',
+              'bg-gold-50 text-amber-500',
               'bg-violet-50 text-violet-500',
               'bg-cyan-50 text-cyan-500',
             ];
@@ -546,7 +547,7 @@ function LatestDocuments({
           'bg-rose-50',
           'bg-blue-50',
           'bg-emerald-50',
-          'bg-amber-50',
+          'bg-gold-50',
           'bg-violet-50',
           'bg-cyan-50',
         ];
@@ -704,7 +705,7 @@ function PortfolioSection({ researcher }: { researcher: HiredResearcher }) {
                         </div>
                       </td>
                       <td className="px-2 py-3 text-right">
-                        <div className={`inline-flex rounded px-1.5 py-0.5 text-xs font-bold ${p.pnl >= 0 ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>
+                        <div className={`inline-flex rounded px-1.5 py-0.5 text-xs font-bold ${p.pnl >= 0 ? 'bg-rose-50 text-up-600' : 'bg-emerald-50 text-down-600'}`}>
                           {p.cost_price > 0
                             ? `${((p.current_price - p.cost_price) / p.cost_price * 100).toFixed(2)}%`
                             : '-'}
@@ -841,9 +842,9 @@ function GrowthViewSection({ researcher }: { researcher: HiredResearcher }) {
           </div>
           <div className="absolute bottom-4 right-4 flex gap-2 rounded-lg bg-white/90 px-3 py-2 text-xs text-slate-400 shadow-sm">
             <span className="text-blue-500">研究员</span>
-            <span className="text-emerald-500">知识</span>
+            <span className="text-down-500">知识</span>
             <span className="text-amber-500">洞察</span>
-            <span className="text-rose-500">交易</span>
+            <span className="text-up-500">交易</span>
             <span>任务</span>
           </div>
         </div>
@@ -979,7 +980,14 @@ export default function AIResearcherWorkstationPage() {
   const selectedDocuments = activeDocuments.length > 0 ? activeDocuments : hotDocuments;
 
   return (
-    <div className="flex flex-col gap-3 md:flex-row" style={{ minHeight: 'calc(100vh - 56px - 40px)' }}>
+    <div>
+      <div className="px-1 pb-3">
+        <SectionHeading
+          title="AI 研究员工作台"
+          subtitle="管理已雇佣的研究员，查看夜间研判与模拟账户表现"
+        />
+      </div>
+      <div className="flex flex-col gap-3 md:flex-row" style={{ minHeight: 'calc(100vh - 56px - 40px)' }}>
       {/* ── 左侧面板 ── */}
       <div className="w-full shrink-0 rounded-lg border border-slate-100 bg-white md:w-52">
         {/* 移动端横滑列表 */}
@@ -990,7 +998,7 @@ export default function AIResearcherWorkstationPage() {
               type="button"
               onClick={() => setActiveId(null)}
               className={`flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors ${
-                activeId === null ? 'bg-amber-50 text-amber-700 font-semibold' : 'bg-slate-50'
+                activeId === null ? 'bg-gold-50 text-gold-600 font-semibold' : 'bg-slate-50'
               }`}
             >
               <AppstoreOutlined />
@@ -1056,6 +1064,7 @@ export default function AIResearcherWorkstationPage() {
           </Row>
         )}
       </div>
+    </div>
     </div>
   );
 }

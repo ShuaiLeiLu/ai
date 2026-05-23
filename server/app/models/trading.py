@@ -7,9 +7,10 @@
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
-from sqlalchemy import Date, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Date, DateTime, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin
@@ -117,3 +118,109 @@ class TradingAccountSnapshot(Base, TimestampMixin):
     daily_pnl: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 
     account = relationship("TradingAccount")
+
+
+class PendingOrder(Base, TimestampMixin):
+    """挂单(限价单未成交时落库,盘中撮合循环扫描)。
+
+    生命周期:
+      ACTIVE      -> 等待撮合
+      FILLED      -> 已成交(对应 trade_records 中的 trade_id)
+      CANCELLED   -> 用户主动取消 / 资金或持仓不足
+      EXPIRED     -> 当日 15:00 自动过期
+    """
+
+    __tablename__ = "pending_orders"
+    __table_args__ = (
+        Index("ix_pending_orders_account_status", "account_id", "status"),
+        Index("ix_pending_orders_symbol_status", "symbol", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    account_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("trading_accounts.id"), nullable=False, index=True,
+    )
+    symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+    name: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    side: Mapped[str] = mapped_column(String(10), nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    limit_price: Mapped[float] = mapped_column(Float, nullable=False)
+    # ACTIVE / FILLED / CANCELLED / EXPIRED
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="ACTIVE")
+    # 当日 15:00 自动过期
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False,
+    )
+    # 成交时回填
+    filled_trade_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    filled_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    filled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
+    cancel_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class TradingAccountMinuteSnapshot(Base, TimestampMixin):
+    """模拟账户分钟级权益快照。
+
+    交易时段(09:30-11:30, 13:00-15:00)每分钟由调度器写入一条,
+    用于盘中实时收益曲线 + 分钟/小时/日多粒度聚合。
+    保留约 30 天,过期由清理任务删除。
+    """
+
+    __tablename__ = "trading_account_minute_snapshots"
+    __table_args__ = (
+        Index(
+            "ix_trading_account_minute_snapshots_account_time",
+            "account_id", "snapshot_at",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    account_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("trading_accounts.id"), nullable=False, index=True,
+    )
+    snapshot_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False,
+    )
+    total_asset: Mapped[float] = mapped_column(Float, nullable=False)
+    available_cash: Mapped[float] = mapped_column(Float, nullable=False)
+    holding_value: Mapped[float] = mapped_column(Float, nullable=False)
+    daily_pnl: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
+
+class DailyReviewReport(Base, TimestampMixin):
+    """盘后教练复盘报告。
+
+    每个研究员每个交易日一条。embedding 列供 pattern_match skill 做 RAG。
+    """
+
+    __tablename__ = "daily_review_reports"
+    __table_args__ = (
+        Index(
+            "ix_daily_review_reports_researcher_date",
+            "researcher_id", "trade_date", unique=True,
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    researcher_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("researchers.id"), nullable=False, index=True,
+    )
+    trade_date: Mapped[date] = mapped_column(Date, nullable=False)
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False,
+    )
+    coach_report_md: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    skill_outputs: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    # 当日 alpha 指标
+    alpha_vs_index: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    alpha_vs_sector: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    win_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    total_pnl: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    # embedding 数组(text-embedding-3-small 1536 维),JSONB 落库
+    # 注:服务器未安装 pgvector,RAG 检索由 Python 端做余弦相似度
+    embedding: Mapped[list[float] | None] = mapped_column(
+        JSONB, nullable=True,
+    )
+    tokens_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

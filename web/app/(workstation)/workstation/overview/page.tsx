@@ -1,39 +1,35 @@
 /**
- * 盘前速览页面 —— 仿目标站点仪表板布局
+ * 盘前速览页面 —— 决策驾驶舱
  *
- * 布局（左右两列）：
- * ┌─────────────────────┬──────────────┐
- * │ A股热讯（10 条）     │ 盘前热门解读   │
- * ├─────────────────────┤              │
- * │ 市场核心指标（4卡片）│ 市场强弱指标   │
- * ├─────────────────────┼──────────────┤
- * │ 行业板块涨跌 [lazy]  │ 涨跌榜 [lazy] │
- * │                     ├──────────────┤
- * │                     │ 涨停天梯[lazy]│
- * │                     ├──────────────┤
- * │                     │ 异动名单[lazy]│
- * └─────────────────────┴──────────────┘
+ * 信息层级（从重到轻）：
+ *   ① 顶部 Hero：市场情绪 + 主要指数（重点位置）
+ *   ② 焦点行：AI 早间研判（大焦点卡） + 板块涨跌 + 涨停天梯
+ *   ③ 长列内容：A股热讯 + 市场强弱指标 + 异动名单
  *
- * 数据流：各子组件独立通过 React Query hooks 拉取后端真实数据
- * 性能：首屏（HotNews / MarketIndicators / AiDigest / TrendsChart）同步加载；
- *       折叠以下卡片（IndustryBoard / StockRank / LimitUpLadder / Anomalies）
- *       使用 next/dynamic 懒加载，减少首屏 JS 解析量。
+ * 栅格：
+ *   < md   单列堆叠
+ *   md     2 列
+ *   xl     12 栅格灵活拼接
  */
 'use client';
 
-import { Col, Row, Skeleton } from 'antd';
+import { Skeleton } from 'antd';
 import dynamic from 'next/dynamic';
 
-// ── 首屏可见卡片：同步 import，立即可用 ────────────────────────────────────
+import { SectionHeading } from '@/components/ui/section-heading';
 import {
   AiDigestCard,
   HotNewsCard,
+  MarketHero,
   MarketIndicatorsCard,
   TrendsChartCard,
 } from '@/features/preopen/components';
 
-// ── 折叠以下卡片：懒加载，不阻塞首屏 JS 解析 ─────────────────────────────
-const cardSkeleton = <div className="rounded-xl border border-slate-100 bg-white p-5"><Skeleton active paragraph={{ rows: 5 }} /></div>;
+const cardSkeleton = (
+  <div className="rounded-2xl border border-ink-50 bg-white p-5 shadow-card">
+    <Skeleton active paragraph={{ rows: 5 }} />
+  </div>
+);
 
 const IndustryBoardCard = dynamic(
   () => import('@/features/preopen/components/IndustryBoardCard').then((m) => ({ default: m.IndustryBoardCard })),
@@ -57,24 +53,48 @@ const AnomaliesCard = dynamic(
 
 export default function OverviewPage() {
   return (
-    <div className="space-y-4">
-      <Row gutter={[16, 16]}>
-        {/* 左侧：侧重资讯与宏观指标 */}
-        <Col xs={24} lg={12} className="space-y-4">
-          <HotNewsCard />
-          <MarketIndicatorsCard />
-          <IndustryBoardCard />  {/* 懒加载 */}
-        </Col>
+    <div className="mx-auto w-full max-w-[1920px]">
+      <SectionHeading
+        title="盘前速览 · 今日决策驾驶舱"
+        subtitle="您配置的自驱研究员已完成夜间研判，重点线索已上推至首屏"
+        actions={
+          <span className="flex items-center gap-1.5">
+            <span className="pulse-dot" />
+            <span>数据实时同步</span>
+          </span>
+        }
+      />
 
-        {/* 右侧：侧重 AI 分析、趋势与具体榜单 */}
-        <Col xs={24} lg={12} className="space-y-4">
+      {/* ① 重点位置：市场情绪 + 指数 Hero */}
+      <MarketHero />
+
+      {/* ② 焦点行 */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-12">
+        <div className="xl:col-span-5">
           <AiDigestCard />
+        </div>
+        <div className="xl:col-span-4">
+          <IndustryBoardCard />
+        </div>
+        <div className="md:col-span-2 xl:col-span-3">
+          <LimitUpLadderCard />
+        </div>
+      </div>
+
+      {/* ③ 长列内容 */}
+      <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-12">
+        <div className="xl:col-span-5 space-y-4">
+          <HotNewsCard />
+        </div>
+        <div className="xl:col-span-4 space-y-4">
+          <MarketIndicatorsCard />
           <TrendsChartCard />
-          <StockRankCard />      {/* 懒加载 */}
-          <LimitUpLadderCard />  {/* 懒加载 */}
-          <AnomaliesCard />      {/* 懒加载 */}
-        </Col>
-      </Row>
+        </div>
+        <div className="md:col-span-2 xl:col-span-3 space-y-4">
+          <StockRankCard />
+          <AnomaliesCard />
+        </div>
+      </div>
     </div>
   );
 }

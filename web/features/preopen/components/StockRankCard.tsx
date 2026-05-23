@@ -36,32 +36,34 @@ function RankTable({ direction }: { direction: 'up' | 'down' }) {
   if (!data?.length) return <div className="py-6 text-center text-xs text-slate-400">暂无数据</div>;
 
   return (
-    <table className="w-full text-[13px]">
-      <thead>
-        <tr className="border-b border-slate-100">
-          <TH>代码</TH>
-          <TH>名称</TH>
-          <TH className="text-right">涨跌幅</TH>
-          <TH className="text-right">最新价</TH>
-          <TH className="text-right">成交额</TH>
-          <TH className="text-right">换手率</TH>
-        </tr>
-      </thead>
-      <tbody>
-        {data.map((s: StockRankItem) => (
-          <tr key={s.symbol} className="border-b border-slate-50 transition-colors hover:bg-slate-50">
-            <td className="px-2 py-1.5 text-slate-500">{s.symbol}</td>
-            <td className="px-2 py-1.5 font-medium text-slate-800">{s.name}</td>
-            <td className={`px-2 py-1.5 text-right font-medium tabular-nums ${pctColor(s.change_pct)}`}>
-              {s.change_pct > 0 ? '+' : ''}{s.change_pct.toFixed(2)}%
-            </td>
-            <td className="px-2 py-1.5 text-right tabular-nums text-slate-600">{s.price.toFixed(2)}</td>
-            <td className="px-2 py-1.5 text-right text-slate-500">{fmtAmt(s.amount)}</td>
-            <td className="px-2 py-1.5 text-right text-slate-500">{s.turnover_ratio.toFixed(1)}%</td>
+    <div className="-mx-2 overflow-x-auto sm:mx-0">
+      <table className="w-full min-w-[460px] text-[13px]">
+        <thead>
+          <tr className="border-b border-slate-100">
+            <TH>代码</TH>
+            <TH>名称</TH>
+            <TH className="text-right">涨跌幅</TH>
+            <TH className="hidden text-right sm:table-cell">最新价</TH>
+            <TH className="hidden text-right md:table-cell">成交额</TH>
+            <TH className="hidden text-right md:table-cell">换手率</TH>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {data.map((s: StockRankItem) => (
+            <tr key={s.symbol} className="border-b border-slate-50 transition-colors hover:bg-slate-50">
+              <td className="whitespace-nowrap px-2 py-1.5 text-slate-500">{s.symbol}</td>
+              <td className="whitespace-nowrap px-2 py-1.5 font-medium text-slate-800">{s.name}</td>
+              <td className={`whitespace-nowrap px-2 py-1.5 text-right font-medium tabular-nums ${pctColor(s.change_pct)}`}>
+                {s.change_pct > 0 ? '+' : ''}{s.change_pct.toFixed(2)}%
+              </td>
+              <td className="hidden whitespace-nowrap px-2 py-1.5 text-right tabular-nums text-slate-600 sm:table-cell">{s.price.toFixed(2)}</td>
+              <td className="hidden whitespace-nowrap px-2 py-1.5 text-right text-slate-500 md:table-cell">{fmtAmt(s.amount)}</td>
+              <td className="hidden whitespace-nowrap px-2 py-1.5 text-right text-slate-500 md:table-cell">{s.turnover_ratio.toFixed(1)}%</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

@@ -45,7 +45,7 @@ from app.models.trading import TradeRecord as RecordModel
 from app.models.trading import TradingAccount as AccountModel
 from app.modules.trading.quote_cache import get_cached_quotes, get_or_refresh_cached_quotes, refresh_cached_quotes
 from app.modules.trading.reflection_skill import TradingReflectionSkill
-from app.modules.trading.rqalpha_adapter import (
+from app.modules.trading.paper_trading_engine import (
     ORDER_STATUS_FILLED,
     MarketSnapshot,
     compute_sellable_quantity,
@@ -532,10 +532,15 @@ class TradingService:
         trade_context: dict[str, object],
     ) -> None:
         """追加成交后的 AI 复盘日志，内容会覆盖交易复盘、执行反思与次日展望。"""
+        # 把 session 和 account_id 塞进 trade_context,让 reflection_skill
+        # 能拉取当日其他成交 / 该股历史成交,生成上下文敏感的复盘
+        enriched_ctx = dict(trade_context)
+        enriched_ctx.setdefault("session", session)
+        enriched_ctx.setdefault("account_id", account_id)
         reflection = await _reflection_skill.build_trade_reflection(
             researcher_name=researcher.name if researcher else "小市值研究员",
             researcher_prompt=researcher.prompt if researcher else "",
-            trade_context=trade_context,
+            trade_context=enriched_ctx,
         )
         session.add(
             TradeLogModel(
@@ -584,12 +589,20 @@ class TradingService:
             hold_days_val: float | None = None
 
             if row.side == "buy":
+                # 注:TradeRecord.commission 字段在新撮合下已经包含 transfer_fee
+                # (撮合时存的是 commission + transfer_fee 之和),所以 cost_price
+                # 仍然是 fully-loaded 的。
                 cash -= amount + commission
                 cost_price = round((amount + commission) / quantity, 4)
                 lots[symbol].append(_Lot(quantity=quantity, unit_cost=cost_price, bought_at=dt))
                 market_price[symbol] = price
             else:
-                cash += amount - commission
+                # 卖出端:重新算一遍印花税和过户费(因为 TradeRecord.commission
+                # 字段是 commission+transfer_fee,没有单独存 tax)。
+                from app.modules.trading.account_state import AccountStateManager
+
+                stamp_tax = AccountStateManager.calc_stamp_tax(amount)
+                cash += amount - commission - stamp_tax
                 remaining = quantity
                 cost_basis = 0.0
                 weighted_hold_days = 0.0
@@ -608,7 +621,7 @@ class TradingService:
                         symbol_lots.popleft()
 
                 if remaining > 0:
-                    # 容错：若出现超卖数据，避免把收益算成异常高值。
+                    # 容错:出现超卖数据时,避免把收益算成异常高值
                     estimated_cost = price * remaining
                     cost_basis += estimated_cost
                     consumed += remaining
@@ -619,7 +632,8 @@ class TradingService:
                     market_price.pop(symbol, None)
 
                 cost_price = round(cost_basis / quantity, 4) if quantity > 0 else None
-                realized_pnl = round(amount - commission - cost_basis, 2)
+                # 关键修复:realized_pnl 必须扣印花税,否则虚增 1‰ * amount
+                realized_pnl = round(amount - commission - stamp_tax - cost_basis, 2)
                 realized_pnl_pct = round(realized_pnl / cost_basis, 4) if cost_basis > 0 else None
                 hold_days_val = round(weighted_hold_days / consumed, 1) if consumed > 0 else None
 
@@ -717,7 +731,10 @@ class TradingService:
                     unit_cost = round((amount + commission) / quantity, 4) if quantity > 0 else price
                     lots[row.symbol].append(_Lot(quantity=quantity, unit_cost=unit_cost, bought_at=row.created_at))
                 else:
-                    cash += amount - commission
+                    # 卖出现金净额扣印花税(与 _replay_records 一致)
+                    from app.modules.trading.account_state import AccountStateManager
+                    stamp_tax = AccountStateManager.calc_stamp_tax(amount)
+                    cash += amount - commission - stamp_tax
                     remaining = quantity
                     symbol_lots = lots[row.symbol]
                     while remaining > 0 and symbol_lots:
@@ -786,44 +803,55 @@ class TradingService:
         *,
         cache_only: bool = True,
     ) -> None:
-        """根据行情重算账户汇总。
+        """根据最新行情重算账户全部字段(holding_value / total_asset / daily_pnl)。
 
-        默认走缓存快路径；下单等主动刷新场景可显式要求走实时行情。
+        统一走 AccountStateManager,确保撮合时、定时盯市、API 调用三处口径一致:
+          - holding_value = Σ(latest_price * qty),不再用近似累加
+          - total_asset   = available_cash + holding_value
+          - daily_pnl     = realized_today + floating_today
         """
+        from app.modules.trading.account_state import AccountStateManager
+
         repo = PositionRepository(session)
         positions = await repo.list_by_account(account.id)
         quote_map = await self._load_realtime_quotes(
             [position.symbol for position in positions],
             cache_only=cache_only,
         )
-        account.holding_value, floating_daily_pnl = self._apply_quotes_to_positions(positions, quote_map)
-        account.total_asset = round(float(account.available_cash) + float(account.holding_value), 2)
 
+        # 1) 盯市:更新 position.current_price/pnl + account.holding_value/total_asset
+        _, floating_daily_pnl = AccountStateManager.mark_to_market(
+            account, positions, quote_map,
+        )
+
+        # 2) 重算 realized_today(优先走 replay 的精确值)
         today = datetime.now().date()
         start_at = datetime.combine(today, datetime.min.time())
         end_at = start_at + timedelta(days=1)
         today_records = await self._load_account_records_in_range(
-            session,
-            account.id,
-            start_at=start_at,
-            end_at=end_at,
+            session, account.id, start_at=start_at, end_at=end_at,
         )
 
         realized_daily_pnl = 0.0
         if today_records:
             if any(row.side == "sell" for row in today_records):
-                # 只有当日存在卖出时，才需要回放全量历史去还原真实成本价。
+                # 当日有卖出:用 replay 还原 fully-loaded 成本价计算精确 realized
                 records = await self._load_account_records(session, account.id)
                 replay = self._replay_records(records)
                 for record in replay.record_map.values():
                     if record.created_at.date() != today:
                         continue
                     if record.side == "buy":
-                        realized_daily_pnl -= record.commission
+                        # 买入端的"费用"算 realized 负贡献(commission + transfer_fee)
+                        realized_daily_pnl -= float(record.commission or 0.0)
                     elif record.realized_pnl is not None:
                         realized_daily_pnl += record.realized_pnl
             else:
-                realized_daily_pnl = -sum(float(row.commission or 0.0) for row in today_records)
+                # 当日仅有买入:realized = -Σ(费用)
+                realized_daily_pnl = -sum(
+                    float(row.commission or 0.0) for row in today_records
+                )
+
         account.daily_pnl = round(realized_daily_pnl + floating_daily_pnl, 2)
 
     async def async_get_account(
@@ -995,6 +1023,9 @@ class TradingService:
             latest_record.symbol,
             quote_map.get(latest_record.symbol),
         )
+        # 注入 session / account_id 让 reflection_skill 能拉上下文
+        trade_context["session"] = session
+        trade_context["account_id"] = account.id
         try:
             reflection = await _reflection_skill.build_trade_reflection(
                 researcher_name=researcher.name if researcher else "交易研究员",
@@ -1414,6 +1445,36 @@ class TradingService:
             close_tax_rate=CLOSE_TAX_RATE,
             min_commission=MIN_COMMISSION,
         )
+        # 限价偏离市价 → 挂单(不报错)
+        if execution.status == "ACTIVE":
+            from app.modules.trading.pending_order_service import create_pending_order
+            order = await create_pending_order(
+                session,
+                account_id=acc.id,
+                symbol=payload.symbol,
+                name=resolved_name,
+                side=payload.side,
+                quantity=payload.quantity,
+                limit_price=payload.price,
+            )
+            await session.commit()
+            return PlaceOrderResponse(
+                trade_id=order.id,
+                symbol=payload.symbol,
+                side=payload.side,
+                quantity=payload.quantity,
+                filled_quantity=0,
+                price=payload.price,
+                amount=0.0,
+                commission=0.0,
+                tax=0.0,
+                realized_pnl=None,
+                status="ACTIVE",
+                engine=execution.engine,
+                message=f"挂单成功:等待行情匹配({execution.message})",
+            )
+
+        # 其他非 FILLED(REJECTED / CANCELLED)→ 报错
         if execution.status != ORDER_STATUS_FILLED:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

@@ -5,72 +5,36 @@ interface LogoProps {
   size?: number;
 }
 
-export function Logo({ className, size = 32 }: LogoProps) {
+/**
+ * 极睿智投 品牌 Logo —— 松烟墨绿渐变方块 + 思源宋体「极」字
+ *
+ * 对照设计稿：圆角 9px、深绿渐变（brand-600 → brand-500）、阴影 brand
+ * 用法：<Logo size={32} />
+ */
+export function Logo({ className = '', size = 32 }: LogoProps) {
+  const fontSize = Math.round(size * 0.55);
+  const radius = Math.round(size * 0.28);
   return (
-    <div 
-      className={`relative flex items-center justify-center ${className} group`}
-      style={{ width: size, height: size }}
+    <div
+      className={`group relative grid place-items-center bg-gradient-to-br from-brand-500 to-brand-700 text-white shadow-brand transition-transform duration-300 group-hover:scale-105 ${className}`}
+      style={{ width: size, height: size, borderRadius: radius }}
+      aria-label="极睿智投 Logo"
     >
-      <svg
-        viewBox="0 0 32 32"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-        className="w-full h-full transition-transform duration-500 group-hover:scale-110"
+      <span
+        className="serif font-bold leading-none"
+        style={{ fontSize, lineHeight: 1 }}
       >
-        {/* X 的上升路径 (趋势) */}
-        <path
-          d="M6 26L26 6M26 6H18M26 6V14"
-          stroke="url(#x_gradient_1)"
-          strokeWidth="3.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="drop-shadow-[0_0_4px_rgba(124,58,237,0.3)]"
-        />
-        
-        {/* X 的交叉路径 (深度) */}
-        <path
-          d="M26 26L6 6"
-          stroke="url(#x_gradient_2)"
-          strokeWidth="3.5"
-          strokeLinecap="round"
-          opacity="0.8"
-        />
-
-        {/* 核心智投之眼 (睿) */}
-        <rect
-          x="13"
-          y="13"
-          width="6"
-          height="6"
-          rx="1"
-          transform="rotate(45 16 16)"
-          fill="white"
-          className="animate-pulse"
-        />
-        <rect
-          x="14.5"
-          y="14.5"
-          width="3"
-          height="3"
-          rx="0.5"
-          transform="rotate(45 16 16)"
-          fill="#7c3aed"
-        />
-
-        <defs>
-          <linearGradient id="x_gradient_1" x1="6" y1="26" x2="26" y2="6" gradientUnits="userSpaceOnUse">
-            <stop stopColor="#7c3aed" />
-            <stop offset="1" stopColor="#a78bfa" />
-          </linearGradient>
-          <linearGradient id="x_gradient_2" x1="26" y1="26" x2="6" y2="6" gradientUnits="userSpaceOnUse">
-            <stop stopColor="#c4b5fd" />
-            <stop offset="1" stopColor="#7c3aed" />
-          </linearGradient>
-        </defs>
-      </svg>
-      
-      {/* 背景晕染效果 */}
-      <div className="absolute inset-0 -z-10 rounded-full bg-brand-500/10 blur-xl opacity-0 group-hover:opacity-100 transition-opacity" />
+        极
+      </span>
+      {/* 金色装饰光晕（hover 显形） */}
+      <span
+        aria-hidden
+        className="pointer-events-none absolute inset-0 rounded-[inherit] opacity-0 transition-opacity group-hover:opacity-100"
+        style={{
+          background:
+            'radial-gradient(circle at 100% 0%, rgba(200,154,58,.30), transparent 60%)',
+        }}
+      />
     </div>
   );
 }

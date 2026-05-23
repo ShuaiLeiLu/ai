@@ -266,3 +266,72 @@ async def dismiss_researcher(
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="数据库不可用")
     await service.async_dismiss(session, user_id, researcher_id)
     return ApiResponse(data=OperationResponse(message="已解雇研究员", resource_id=researcher_id))
+
+
+@router.get("/{researcher_id}/scorecard")
+async def get_scorecard(
+    researcher_id: str,
+    days: int = Query(30, ge=7, le=90),
+    session: AsyncSession | None = Depends(get_optional_session),
+) -> ApiResponse[dict]:
+    """研究员判断累积评分卡(近 N 天)。
+
+    返回:
+      - sample_size:已 T+1 评估的判断次数
+      - accuracy:综合准确率
+      - bias_breakdown:不同 bias 下的准确率
+      - recent_logs:最近 5 条判断
+    """
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="数据库不可用",
+        )
+    from collections import Counter
+    from datetime import date, timedelta
+
+    from sqlalchemy import select
+
+    from app.models.researcher import ResearcherThesisLog
+
+    cutoff = date.today() - timedelta(days=days)
+    q = await session.execute(
+        select(ResearcherThesisLog).where(
+            ResearcherThesisLog.researcher_id == researcher_id,
+            ResearcherThesisLog.trade_date >= cutoff,
+        ).order_by(ResearcherThesisLog.trade_date.desc())
+    )
+    logs = list(q.scalars().all())
+    evaluated = [l for l in logs if l.correctness != "pending"]
+    sample_size = len(evaluated)
+    correct = sum(1 for l in evaluated if l.correctness == "correct")
+    bias_counter: Counter[str] = Counter(l.direction_call for l in evaluated)
+    bias_correct: Counter[str] = Counter(
+        l.direction_call for l in evaluated if l.correctness == "correct"
+    )
+
+    return ApiResponse(data={
+        "researcher_id": researcher_id,
+        "window_days": days,
+        "total_logs": len(logs),
+        "sample_size": sample_size,
+        "accuracy": round(correct / sample_size, 3) if sample_size else 0.0,
+        "bias_breakdown": [
+            {
+                "bias": b or "未明确",
+                "count": cnt,
+                "correct": bias_correct[b],
+                "accuracy": round(bias_correct[b] / cnt, 3) if cnt else 0.0,
+            }
+            for b, cnt in bias_counter.most_common()
+        ],
+        "recent_logs": [
+            {
+                "trade_date": l.trade_date.isoformat(),
+                "direction_call": l.direction_call,
+                "correctness": l.correctness,
+                "actual_result": l.actual_result,
+            }
+            for l in logs[:5]
+        ],
+    })

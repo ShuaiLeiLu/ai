@@ -1,279 +1,50 @@
-"""交易反思 skill。
+"""单笔交易即时复盘 skill。
 
-在每次模拟盘成交后输出一段结构化复盘，包含：
-  - 交易动作与原因回放
-  - 风险/执行反思
-  - 次日观察与展望
+设计原则(2026-05-22 重写):
+  - 不是"描述员",是评估这笔交易的教练
+  - 必须给得分(1-10) + 核心问题 + 具体次日 if-then 动作
+  - 上下文敏感:加载当日同账户其他成交 + 这只票历史成交
+  - 失败时返回最小化确认信息,不再写 200 行假分析
+
+为什么之前机械:
+  1) fallback 模板覆盖所有字段拼接,谁来都一样
+  2) prompt 强制 3 段固定结构,LLM 只能填表
+  3) max_tokens=900 太小,无法写深
+  4) 永远孤立单笔,看不到组合上下文
 """
 from __future__ import annotations
 
 import logging
+from datetime import datetime, time, timedelta
 from typing import Any
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.integrations.llm.client import LLMMessage, get_llm_client
+from app.models.trading import TradeRecord
 
 logger = logging.getLogger(__name__)
 
 
 class TradingReflectionSkill:
-    """统一生成交易复盘内容，优先走 LLM，失败时回退模板。"""
+    """单笔成交即时复盘。
+
+    对外接口保持不变:
+      - build_trade_log_title(trade_context) -> str
+      - build_trade_reflection(researcher_name, researcher_prompt, trade_context, allow_fallback) -> str
+
+    在 trade_context 中可选传入:
+      - session: AsyncSession  → 用于查当日 / 历史成交上下文
+      - account_id: str        → 同上
+    缺失时优雅降级(无上下文也能跑,但分析没那么深)。
+    """
 
     def build_trade_log_title(self, trade_context: dict[str, Any]) -> str:
         action = "买入操作播报" if trade_context.get("side") == "buy" else "卖出操作播报"
         name = str(trade_context.get("name") or trade_context.get("symbol") or "交易")
         symbol = str(trade_context.get("symbol") or "").strip()
         return f"{action}｜{name}({symbol})" if symbol else f"{action}｜{name}"
-
-    @staticmethod
-    def _as_float(value: Any, default: float = 0.0) -> float:
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return default
-
-    @staticmethod
-    def _money(value: Any) -> str:
-        return f"{TradingReflectionSkill._as_float(value):,.2f} 元"
-
-    @staticmethod
-    def _price(value: Any) -> str:
-        return f"{TradingReflectionSkill._as_float(value):.2f} 元"
-
-    @staticmethod
-    def _pct(value: Any) -> str:
-        if value is None:
-            return "-"
-        return f"{TradingReflectionSkill._as_float(value) * 100:+.2f}%"
-
-    @staticmethod
-    def _position_pct(value: Any) -> str:
-        ratio = TradingReflectionSkill._as_float(value)
-        return f"{ratio * 100:.2f}%" if ratio > 0 else "-"
-
-    @staticmethod
-    def _amount_yi(value: Any) -> str:
-        return f"{TradingReflectionSkill._as_float(value) / 100000000:.2f} 亿"
-
-    @staticmethod
-    def _flow_yi(value: Any) -> str:
-        val = TradingReflectionSkill._as_float(value) / 100000000
-        return f"{val:+.2f} 亿"
-
-    @staticmethod
-    def _raw_pct(value: Any) -> str:
-        return f"{TradingReflectionSkill._as_float(value):+.2f}%"
-
-    @staticmethod
-    def _dict_value(mapping: Any, key: str, default: Any = None) -> Any:
-        return mapping.get(key, default) if isinstance(mapping, dict) else default
-
-    def _build_market_snapshot_lines(self, trade_context: dict[str, Any]) -> list[str]:
-        snapshot = trade_context.get("market_snapshot")
-        if not isinstance(snapshot, dict):
-            return ["本次成交未能获取行情快照，复盘仅使用真实成交和账户数据。"]
-
-        quote = self._dict_value(snapshot, "quote")
-        industry = self._dict_value(snapshot, "industry")
-        sentiment = self._dict_value(snapshot, "market_sentiment") or {}
-        limit_up = self._dict_value(snapshot, "limit_up")
-        limit_down = self._dict_value(snapshot, "limit_down")
-        snapshot_at = str(snapshot.get("snapshot_at") or self._dict_value(sentiment, "snapshot_at") or "-")
-
-        lines = [f"行情快照时间：{snapshot_at}"]
-
-        if isinstance(quote, dict):
-            lines.extend(
-                [
-                    "",
-                    "| 指标 | 数值 |",
-                    "| --- | ---: |",
-                    f"| 最新价 | {self._price(self._dict_value(quote, 'price'))} |",
-                    f"| 涨跌幅 | {self._raw_pct(self._dict_value(quote, 'change_pct'))} |",
-                    f"| 今开/最高/最低 | {self._price(self._dict_value(quote, 'open'))} / {self._price(self._dict_value(quote, 'high'))} / {self._price(self._dict_value(quote, 'low'))} |",
-                    f"| 成交额 | {self._amount_yi(self._dict_value(quote, 'amount'))} |",
-                    f"| 换手率 | {self._raw_pct(self._dict_value(quote, 'turnover_ratio'))} |",
-                    f"| 量比 | {self._as_float(self._dict_value(quote, 'volume_ratio')):.2f} |",
-                    f"| 主力净流入 | {self._flow_yi(self._dict_value(quote, 'main_net_inflow'))} |",
-                    f"| 主力净占比 | {self._raw_pct(self._dict_value(quote, 'main_net_inflow_pct'))} |",
-                    f"| 所属行业 | {self._dict_value(quote, 'industry', '-') or '-'} |",
-                ]
-            )
-        else:
-            lines.append("个股实时行情未获取成功。")
-
-        if isinstance(industry, dict):
-            lines.extend(
-                [
-                    "",
-                    "| 板块指标 | 数值 |",
-                    "| --- | ---: |",
-                    f"| 板块名称 | {self._dict_value(industry, 'name', '-') or '-'} |",
-                    f"| 板块涨跌幅 | {self._raw_pct(self._dict_value(industry, 'change_pct'))} |",
-                    f"| 板块成交额 | {self._as_float(self._dict_value(industry, 'total_amount')):.2f} 亿 |",
-                    f"| 板块净流入 | {self._flow_yi(self._as_float(self._dict_value(industry, 'net_inflow')) * 100000000)} |",
-                    f"| 上涨/下跌家数 | {int(self._as_float(self._dict_value(industry, 'rise_count')))} / {int(self._as_float(self._dict_value(industry, 'fall_count')))} |",
-                    f"| 领涨股 | {self._dict_value(industry, 'leading_stock', '-') or '-'} {self._raw_pct(self._dict_value(industry, 'leading_stock_pct'))} |",
-                ]
-            )
-
-        if isinstance(sentiment, dict):
-            top_industries = self._dict_value(sentiment, "top_limit_industries", [])
-            top_text = "、".join(
-                f"{item.get('industry')}({item.get('limit_up_count')}家)"
-                for item in top_industries
-                if isinstance(item, dict) and item.get("industry")
-            ) or "-"
-            lines.extend(
-                [
-                    "",
-                    "| 情绪指标 | 数值 |",
-                    "| --- | ---: |",
-                    f"| 涨停家数 | {int(self._as_float(self._dict_value(sentiment, 'limit_up_count')))} 家 |",
-                    f"| 跌停家数 | {int(self._as_float(self._dict_value(sentiment, 'limit_down_count')))} 家 |",
-                    f"| 连板家数 | {int(self._as_float(self._dict_value(sentiment, 'multi_board_count')))} 家 |",
-                    f"| 最高连板 | {int(self._as_float(self._dict_value(sentiment, 'highest_consecutive')))} 板 |",
-                    f"| 涨停集中方向 | {top_text} |",
-                ]
-            )
-
-        if isinstance(limit_up, dict):
-            lines.append(
-                f"\n涨停池状态：{limit_up.get('name')}({limit_up.get('symbol')}) 位于涨停池，"
-                f"{int(self._as_float(limit_up.get('consecutive')))} 连板，炸板 {int(self._as_float(limit_up.get('break_count')))} 次。"
-            )
-        elif isinstance(limit_down, dict):
-            lines.append(
-                f"\n跌停池状态：{limit_down.get('name')}({limit_down.get('symbol')}) 位于跌停池，"
-                f"跌幅 {self._raw_pct(limit_down.get('change_pct'))}。"
-            )
-        else:
-            lines.append("\n涨跌停池状态：本标的未出现在当前涨停池/跌停池。")
-
-        return lines
-
-    def build_fallback_reflection(
-        self,
-        *,
-        researcher_name: str,
-        researcher_prompt: str,
-        trade_context: dict[str, Any],
-    ) -> str:
-        side = str(trade_context.get("side") or "buy")
-        action_label = "买入" if side == "buy" else "卖出"
-        symbol = str(trade_context.get("symbol") or "-")
-        name = str(trade_context.get("name") or symbol)
-        quantity = int(trade_context.get("quantity") or 0)
-        price = self._as_float(trade_context.get("price"))
-        amount = self._as_float(trade_context.get("amount"))
-        commission = self._as_float(trade_context.get("commission"))
-        reason = str(trade_context.get("reason") or "按既定交易计划执行")
-        realized_pnl = trade_context.get("realized_pnl")
-        realized_pnl_pct = trade_context.get("realized_pnl_pct")
-        total_asset = self._as_float(trade_context.get("total_asset"))
-        available_cash = self._as_float(trade_context.get("available_cash"))
-        cost_price = trade_context.get("cost_price")
-        position_ratio = self._as_float(trade_context.get("position_ratio"))
-        style_hint = researcher_prompt.strip() or "围绕小市值轮动纪律做交易复盘"
-        market_lines = self._build_market_snapshot_lines(trade_context)
-
-        if side == "buy":
-            trade_table = [
-                "| 股票名称 | 股票代码 | 买入价格 | 买入数量 | 买入金额 | 仓位比例 |",
-                "| --- | --- | ---: | ---: | ---: | ---: |",
-                f"| {name} | {symbol} | {self._price(price)} | {quantity} 股 | {self._money(amount)} | {self._position_pct(position_ratio)} |",
-            ]
-            broadcast = (
-                f"刚按计划买入 {name}({symbol}) {quantity} 股，成交价 {price:.2f} 元，"
-                f"成交额 {amount:,.2f} 元。"
-            )
-            operation_logic = (
-                f"这笔开仓来自当前策略信号：{reason}。盘面判断以成交时采集到的行情快照为准，"
-                "若快照字段缺失则只对缺失字段保持空白，不补写假数据。"
-            )
-            execution_check = (
-                f"执行层面已经完成建仓，手续费 {commission:,.2f} 元，仓位约 {position_ratio * 100:.2f}%。"
-                "后续重点不是主观加戏，而是观察成交后的承接、板块联动和仓位暴露是否仍符合研究员规则。"
-            )
-            outlook = (
-                f"下一交易日优先看 {name}({symbol}) 开盘强弱、价格是否守住本次成交成本附近，"
-                "以及同题材是否继续有资金响应。若开盘明显不及预期，先执行止损/减仓纪律；"
-                "若承接继续增强，再评估是否继续持有，不因为一笔买入就和标的绑定。"
-            )
-        else:
-            pnl_value = self._as_float(realized_pnl)
-            result = "盈利" if pnl_value > 0 else "亏损" if pnl_value < 0 else "持平"
-            buy_price = cost_price if cost_price is not None else "-"
-            trade_table = [
-                "| 股票名称 | 股票代码 | 买入价格 | 卖出价格 | 卖出数量 | 卖出金额 | 盈亏金额 | 盈亏比例 | 交易结果 |",
-                "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
-                (
-                    f"| {name} | {symbol} | {self._price(buy_price) if buy_price != '-' else '-'} | "
-                    f"{self._price(price)} | {quantity} 股 | {self._money(amount)} | "
-                    f"{pnl_value:+,.2f} 元 | {self._pct(realized_pnl_pct)} | {result} |"
-                ),
-            ]
-            broadcast = (
-                f"刚卖出 {name}({symbol}) {quantity} 股，成交价 {price:.2f} 元，"
-                f"本次平仓 {pnl_value:+,.2f} 元，结果为{result}。"
-            )
-            operation_logic = (
-                f"退出触发来自当前策略信号：{reason}。卖出判断结合真实成交、成本、盈亏和行情快照；"
-                "接口未返回的字段不做主观补全。"
-            )
-            execution_check = (
-                f"这次卖出回收资金 {amount:,.2f} 元，手续费 {commission:,.2f} 元。"
-                "卖出后的核心是复核退出是否提升组合效率：盈利时防止利润回吐，亏损时确认是否及时截断风险。"
-            )
-            outlook = (
-                f"下一交易日继续跟踪 {name}({symbol}) 卖出后的反馈，验证本次退出是否有效。"
-                "若原标的反包但没有新的买入信号，不追悔；若板块继续走强，优先寻找有真实成交计划支持的替代机会。"
-            )
-
-        account_lines = []
-        if total_asset > 0 or available_cash > 0:
-            account_lines = [
-                "| 指标 | 数值 |",
-                "| --- | ---: |",
-                f"| 当前总资产 | {self._money(total_asset)} |",
-                f"| 当前可用资金 | {self._money(available_cash)} |",
-            ]
-
-        lines = [
-            "## 交易复盘",
-            "### 操作播报",
-            broadcast,
-            "",
-            *trade_table,
-            "",
-            "### 盘面数据",
-            *market_lines,
-            "",
-            "### 操作逻辑",
-            operation_logic,
-            "",
-            "### 研究员设定",
-            f"{researcher_name}：{style_hint}",
-            "",
-            "## 执行反思",
-            "### 纪律检查",
-            execution_check,
-            "",
-            "### 风险控制",
-            "这条日志的重点是把真实成交复盘成可复核的动作链：为什么动、动了多少、盘面当时给了什么反馈、结果如何、下一步怎么处理。行情字段来自成交时快照，避免用静态文案遮掩真实风险。",
-        ]
-        if account_lines:
-            lines.extend(["", "### 账户状态", *account_lines])
-        lines.extend(["", "## 次日展望", "### 观察重点", outlook, "", "### 交易预案"])
-        if side == "buy":
-            lines.append(
-                "若次日承接强于预期，优先持有观察；若跌破成本区且板块没有共振，按规则减仓或止损，避免把短线交易拖成长线被动持仓。"
-            )
-        else:
-            lines.append(
-                "卖出后资金先保持机动，等待新的真实信号和成交条件出现；不因为刚卖出就立刻寻找补偿性交易。"
-            )
-
-        return "\n".join(lines)
 
     async def build_trade_reflection(
         self,
@@ -283,56 +54,249 @@ class TradingReflectionSkill:
         trade_context: dict[str, Any],
         allow_fallback: bool = True,
     ) -> str:
+        """生成单笔成交复盘 markdown。
+
+        流程:
+          1) 拉取上下文(当日其他成交、这只票历史成交)
+          2) 装配 prompt(教练口吻 + opinionated)
+          3) 调 LLM(data profile,非流式;executor 是后台触发不需要 SSE)
+          4) 失败时返回最小化确认信息,**不再生成套话模板**
+        """
         llm = get_llm_client()
-        fallback = self.build_fallback_reflection(
-            researcher_name=researcher_name,
-            researcher_prompt=researcher_prompt,
-            trade_context=trade_context,
-        )
         if not llm.is_configured:
             if not allow_fallback:
                 raise RuntimeError("LLM 服务未配置")
-            return fallback
+            return self._minimal_confirmation(trade_context)
 
-        system_prompt = (
-            "你是一名A股超短交易复盘研究员。你要学习用户给出的工作日志形式："
-            "按成交事实先做 TRADE 式表格，再写操作播报、盘面数据、操作逻辑、执行反思和次日预案。"
-            "请严格使用 Markdown，并且只使用这三个二级标题作为大段："
-            "`## 交易复盘`、`## 执行反思`、`## 次日展望`。"
-            "每个大段下面可以使用 `### 操作播报`、`### 盘面数据`、`### 操作逻辑`、`### 纪律检查`、`### 观察重点` 等三级标题。"
-            "交易表格必须根据 side 输出：买入表包含股票名称、股票代码、买入价格、买入数量、买入金额、仓位比例；"
-            "卖出表包含股票名称、股票代码、买入价格、卖出价格、卖出数量、卖出金额、盈亏金额、盈亏比例、交易结果。"
-            "只能引用交易上下文里真实存在的价格、数量、金额、盈亏、账户字段和 market_snapshot；"
-            "盘口强弱、主力资金、涨停数量、板块涨跌、成交额等必须优先从 market_snapshot 读取。"
-            "market_snapshot 没有提供的字段，必须明确写“本次快照未返回”，禁止编造具体数字。"
-            "文风可以有临盘复盘的力度，但要专业克制，不喊单、不承诺收益、不写投资建议。"
-        )
-        user_prompt = (
-            f"研究员名称：{researcher_name}\n"
-            f"研究员提示词：{researcher_prompt or '未额外配置'}\n"
-            f"交易上下文：{trade_context}\n\n"
-            "请围绕这次成交生成一条完整的 AI 交易复盘工作流日志。"
-            "结构要像真实交易日志：先有成交表，再有操作播报/盘面数据/操作逻辑，随后执行反思和次日展望。"
+        # 1. 上下文
+        session = trade_context.get("session") if isinstance(trade_context, dict) else None
+        account_id = trade_context.get("account_id") if isinstance(trade_context, dict) else None
+        same_day_trades: list[TradeRecord] = []
+        symbol_history: list[TradeRecord] = []
+        if isinstance(session, AsyncSession) and account_id:
+            symbol = str(trade_context.get("symbol") or "")
+            same_day_trades, symbol_history = await self._load_context(
+                session, account_id=account_id, symbol=symbol,
+            )
+
+        # 2. 构造 prompt
+        system_prompt = self._build_system_prompt(researcher_name, researcher_prompt)
+        user_msg = self._build_user_message(
+            trade_context=trade_context,
+            same_day_trades=same_day_trades,
+            symbol_history=symbol_history,
         )
 
+        # 3. LLM 调用(data profile 用便宜模型已经足够个体交易点评)
         try:
             reply = await llm.chat(
                 [
-                    LLMMessage(role="system", content=system_prompt),
-                    LLMMessage(role="user", content=user_prompt),
+                    LLMMessage("system", system_prompt),
+                    LLMMessage("user", user_msg),
                 ],
-                temperature=0.4,
-                max_tokens=900,
+                profile="data",
+                temperature=0.6,
+                max_tokens=2500,
             )
-            text = reply.strip()
-            required_sections = ("## 交易复盘", "## 执行反思", "## 次日展望")
-            if not all(section in text for section in required_sections):
-                if not allow_fallback:
-                    raise RuntimeError("LLM 复盘缺少必要章节")
-                return fallback
-            return text
         except Exception as exc:
             if not allow_fallback:
                 raise
-            logger.warning("交易复盘 LLM 生成失败，回退模板: %s", exc)
-            return fallback
+            logger.warning("交易复盘 LLM 失败: %s", exc)
+            return self._minimal_confirmation(trade_context)
+
+        text = reply.strip()
+        if len(text) < 50:
+            # LLM 给的内容太短,不像真正复盘
+            return self._minimal_confirmation(trade_context)
+        return text
+
+    # ── 上下文加载 ──
+    @staticmethod
+    async def _load_context(
+        session: AsyncSession, *, account_id: str, symbol: str,
+    ) -> tuple[list[TradeRecord], list[TradeRecord]]:
+        """加载当日其他成交 + 该股近 30 天成交。
+
+        失败不抛,返回空列表。
+        """
+        try:
+            today = datetime.utcnow().date()
+            day_start = datetime.combine(today, time.min)
+            day_end = datetime.combine(today, time.max)
+            same_day_q = await session.execute(
+                select(TradeRecord)
+                .where(
+                    TradeRecord.account_id == account_id,
+                    TradeRecord.created_at >= day_start,
+                    TradeRecord.created_at <= day_end,
+                )
+                .order_by(TradeRecord.created_at)
+            )
+            same_day = list(same_day_q.scalars().all())
+
+            symbol_history: list[TradeRecord] = []
+            if symbol:
+                cutoff = datetime.combine(today - timedelta(days=30), time.min)
+                hist_q = await session.execute(
+                    select(TradeRecord)
+                    .where(
+                        TradeRecord.account_id == account_id,
+                        TradeRecord.symbol == symbol,
+                        TradeRecord.created_at >= cutoff,
+                    )
+                    .order_by(TradeRecord.created_at.desc())
+                    .limit(10)
+                )
+                symbol_history = list(hist_q.scalars().all())
+            return same_day, symbol_history
+        except Exception:
+            logger.exception("加载交易上下文失败")
+            return [], []
+
+    # ── prompt 装配 ──
+    @staticmethod
+    def _build_system_prompt(researcher_name: str, researcher_prompt: str) -> str:
+        style = (researcher_prompt or "").strip()
+        style_hint = f"研究员特征:{style}" if style else "研究员未配置专属风格,按通用短线纪律评估。"
+        return (
+            f"你是 {researcher_name} 的交易教练。每发生一笔成交,你必须写一份"
+            "**针对这笔成交本身的评估**——不是描述成交,是评估对错。\n\n"
+            f"{style_hint}\n\n"
+            "核心纪律(违反一条整段判废):\n"
+            "  1) 数字必须真实来自给你的数据,不许编。但鼓励基于真实数据做合理推断,"
+            "不要用『本次未返回』这种套话遮掩——没数据时直接跳过该维度,不要硬填。\n"
+            "  2) 必须有立场:这笔做得对不对,理由是什么。即使是盈利的卖出,也要找问题。\n"
+            "  3) 禁止输出『继续保持』『加强学习』『控制风险』『仅供参考』这类废话。\n"
+            "  4) 改进建议必须精确到行为(例如『下次若分时图破 5 日线即止损』),"
+            "不要『加强纪律』这种空话。\n\n"
+            "结构(灵活,按内容自然展开,**不要强求固定章节数**):\n"
+            "## 一句话定性\n"
+            "  X 分(1-10) — 这笔做得[漂亮 / 合格 / 勉强 / 糟糕],一句话说原因。\n\n"
+            "## 这笔的核心问题\n"
+            "  挑出 1-3 个最值得讨论的点(对的地方和错的地方都要)。\n"
+            "  每个点必须基于具体数字 / 行情快照中的事实。\n\n"
+            "## 放在当日组合里看\n"
+            "  如果给了当日其他成交:讨论这笔与其他票的配合(分散 / 集中 / 互相抵消)。\n"
+            "  如果没给:这一段简短说『今日单笔,不评估组合层面』即可。\n\n"
+            "## 这只票的历史\n"
+            "  如果给了历史成交:讨论这次相对历史的改进 / 退步。\n"
+            "  如果没给:跳过此段。\n\n"
+            "## 明天怎么办\n"
+            "  必须给 **if-then 形式** 的具体动作(2-3 条),不允许空话。\n"
+            "  例如:『若明日 09:30 该股开盘价 < 今日成本价 X 元,卖出 1/2 仓位;"
+            "若开盘 +3% 且板块跟涨,继续持有,加止盈线到 +5%』。\n\n"
+            "整体长度 600-1200 字,严禁灌水。Markdown 格式。"
+        )
+
+    @staticmethod
+    def _build_user_message(
+        *,
+        trade_context: dict[str, Any],
+        same_day_trades: list[TradeRecord],
+        symbol_history: list[TradeRecord],
+    ) -> str:
+        """把所有信息装成一段给 LLM 的 user message。"""
+        side = str(trade_context.get("side") or "buy")
+        name = trade_context.get("name") or trade_context.get("symbol") or "-"
+        symbol = trade_context.get("symbol") or "-"
+        price = trade_context.get("price")
+        quantity = trade_context.get("quantity")
+        amount = trade_context.get("amount")
+        commission = trade_context.get("commission")
+        reason = trade_context.get("reason") or "(未提供)"
+        cost_price = trade_context.get("cost_price")
+        realized_pnl = trade_context.get("realized_pnl")
+        realized_pnl_pct = trade_context.get("realized_pnl_pct")
+        position_ratio = trade_context.get("position_ratio")
+        total_asset = trade_context.get("total_asset")
+        available_cash = trade_context.get("available_cash")
+        market_snapshot = trade_context.get("market_snapshot")
+
+        # 本笔成交
+        lines = [
+            "=== 本笔成交 ===",
+            f"  方向:{'买入' if side == 'buy' else '卖出'}",
+            f"  标的:{name}({symbol})",
+            f"  成交价:{price}  数量:{quantity}  金额:{amount}  手续费:{commission}",
+            f"  策略原因:{reason}",
+        ]
+        if side == "sell":
+            lines.extend([
+                f"  成本价:{cost_price}",
+                f"  已实现盈亏:{realized_pnl}  盈亏比例:{realized_pnl_pct}",
+            ])
+        if position_ratio is not None:
+            lines.append(f"  本笔仓位比:{position_ratio}")
+        if total_asset is not None:
+            lines.append(f"  账户总资产:{total_asset}  可用现金:{available_cash}")
+
+        # market snapshot
+        if isinstance(market_snapshot, dict):
+            lines.append("\n=== 成交时行情快照 ===")
+            for key in ("quote", "industry", "market_sentiment", "limit_up", "limit_down"):
+                v = market_snapshot.get(key)
+                if v:
+                    lines.append(f"  {key}: {v}")
+        else:
+            lines.append("\n=== 成交时行情快照 ===\n  (未提供)")
+
+        # 当日其他成交
+        if same_day_trades:
+            other = [t for t in same_day_trades if t.symbol != symbol]
+            lines.append("\n=== 当日同账户其他成交(组合视角)===")
+            if other:
+                for t in other[-10:]:
+                    lines.append(
+                        f"  {t.created_at.strftime('%H:%M:%S')} "
+                        f"{t.side} {t.name}({t.symbol}) "
+                        f"{t.quantity}@{t.price:.2f} "
+                        f"金额{t.quantity * t.price:.0f}"
+                    )
+            else:
+                lines.append("  本笔是今天第一笔,无组合上下文。")
+
+        # 该股历史
+        if symbol_history:
+            past = [t for t in symbol_history if not _is_same_trade(t, trade_context)]
+            if past:
+                lines.append(f"\n=== 该股({symbol})过去 30 天成交历史 ===")
+                for t in past[:10]:
+                    lines.append(
+                        f"  {t.created_at.strftime('%Y-%m-%d %H:%M')} "
+                        f"{t.side} {t.quantity}@{t.price:.2f}"
+                    )
+
+        return "\n".join(lines)
+
+    # ── 失败兜底 ──
+    @staticmethod
+    def _minimal_confirmation(trade_context: dict[str, Any]) -> str:
+        """LLM 不可用时的最小化确认信息。
+
+        故意写得很短,不掩饰"AI 分析未生成"。
+        宁可显示『复盘暂不可用』,也不要塞 200 行套话假装很有内容。
+        """
+        side = "买入" if trade_context.get("side") == "buy" else "卖出"
+        name = trade_context.get("name") or trade_context.get("symbol") or "标的"
+        symbol = trade_context.get("symbol") or "-"
+        price = trade_context.get("price")
+        quantity = trade_context.get("quantity")
+        amount = trade_context.get("amount")
+        return (
+            f"## 成交确认\n\n"
+            f"{side} **{name}({symbol})**,数量 {quantity},成交价 {price},金额 {amount}。\n\n"
+            f"> AI 复盘暂不可用(LLM 服务异常或未配置)。"
+            f"系统已记录本次成交,可前往交易记录查看明细。\n"
+        )
+
+
+def _is_same_trade(record: TradeRecord, ctx: dict[str, Any]) -> bool:
+    """判断 record 是不是本笔成交(避免历史列表里把自己也算进去)。"""
+    try:
+        return (
+            record.side == ctx.get("side")
+            and float(record.price) == float(ctx.get("price") or 0)
+            and record.quantity == int(ctx.get("quantity") or 0)
+        )
+    except (TypeError, ValueError):
+        return False

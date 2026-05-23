@@ -1187,3 +1187,499 @@ def list_recent_trade_dates(end_date: date, count: int) -> list[date]:
     trimmed = dates[-count:] if len(dates) >= count else dates
     _cache.set(cache_key, trimmed, CACHE_TTL_HISTORY)
     return trimmed
+
+
+# ════════════════════════════════════════════════════════════
+# Skill 框架新增数据源(2026-05-22)
+# 用途:为盘前/盘后 AI skill 提供外盘、资金面、龙虎榜、技术面、催化日历等数据
+# ════════════════════════════════════════════════════════════
+
+CACHE_TTL_OVERSEAS = 300        # 隔夜外盘:5 分钟(开盘后基本不变)
+CACHE_TTL_FUTURES = 60          # 期指夜盘:1 分钟
+CACHE_TTL_HSGT = 300            # 北向资金:5 分钟
+CACHE_TTL_LHB = 3600            # 龙虎榜:1 小时
+CACHE_TTL_SECTOR_FLOW = 60      # 行业资金流:1 分钟
+CACHE_TTL_CALENDAR = 3600       # 财报/解禁/新股日历:1 小时
+CACHE_TTL_MARGIN = 3600         # 融资融券余额:1 小时
+
+
+@dataclass
+class OverseasIndex:
+    """隔夜外盘指数快照。"""
+    name: str
+    symbol: str
+    price: float
+    change_pct: float
+
+
+@dataclass
+class FuturesQuote:
+    """股指期货快照。"""
+    symbol: str           # IF2506 等
+    name: str             # IF主力 等
+    price: float
+    change_pct: float
+    volume: float
+    open_interest: float
+
+
+@dataclass
+class NorthboundFlow:
+    """北向资金当日净流入。"""
+    trade_date: str
+    sh_net_amount: float  # 沪股通净流入(亿元)
+    sz_net_amount: float  # 深股通净流入(亿元)
+    total_net: float
+
+
+@dataclass
+class LonghubangItem:
+    """龙虎榜个股席位明细。"""
+    symbol: str
+    name: str
+    change_pct: float
+    net_amount: float     # 买入-卖出(元)
+    reason: str           # 上榜原因
+    institution_buy: float
+    institution_sell: float
+
+
+@dataclass
+class IndexDailyBar:
+    """指数日线 K。"""
+    trade_date: str
+    open: float
+    close: float
+    high: float
+    low: float
+    volume: float
+
+
+@dataclass
+class SectorFlow:
+    """行业板块当日资金流。"""
+    name: str
+    change_pct: float
+    main_net_inflow: float   # 主力净流入(元)
+    main_net_pct: float      # 主力净占比(%)
+    leading_stock: str
+
+
+@dataclass
+class CatalystEvent:
+    """今日财报/解禁/新股等事件。"""
+    event_type: str       # earnings / unlock / ipo / policy
+    symbol: str
+    name: str
+    trade_date: str
+    detail: str           # 文本说明
+
+
+@dataclass
+class MarginBalance:
+    """两融余额。"""
+    trade_date: str
+    financing_balance: float    # 融资余额(亿元)
+    securities_balance: float   # 融券余额(亿元)
+    total_balance: float
+
+
+# ── 1. 隔夜外盘(美股三大指数 + 主要科技股)──
+def get_overseas_indices() -> list[OverseasIndex]:
+    """获取隔夜美股关键指数 + 科技股。"""
+    cache_key = "overseas_indices"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    targets = [
+        ("道琼斯", ".DJI"),
+        ("纳斯达克", ".IXIC"),
+        ("标普500", ".INX"),
+        ("费城半导体", ".SOX"),
+        ("纳指100", ".NDX"),
+    ]
+    items: list[OverseasIndex] = []
+    try:
+        df = call_akshare_api("index_us_stock_sina", symbol=".DJI")
+        # 兜底:不同 akshare 版本接口可能差异,失败时尝试其他通用接口
+        if df is None or df.empty:
+            df = call_akshare_api("stock_us_spot_em")
+            if df is not None and not df.empty:
+                for _, row in df.head(50).iterrows():
+                    name = _safe_str(row.get("名称") or row.get("简称"))
+                    if not any(t[0] in name for t in targets):
+                        continue
+                    items.append(OverseasIndex(
+                        name=name,
+                        symbol=_safe_str(row.get("代码")),
+                        price=_safe_float(row.get("最新价")),
+                        change_pct=_safe_float(row.get("涨跌幅")),
+                    ))
+    except Exception:
+        logger.exception("获取隔夜外盘失败")
+
+    _cache.set(cache_key, items, CACHE_TTL_OVERSEAS)
+    return items
+
+
+# ── 2. 股指期货夜盘(IF / IH / IC 主力)──
+def get_futures_night_quotes() -> list[FuturesQuote]:
+    """获取沪深 IF/IH/IC 期指主力夜盘行情。"""
+    cache_key = "futures_night_quotes"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    items: list[FuturesQuote] = []
+    targets = ["IF", "IH", "IC", "IM"]
+    try:
+        df = call_akshare_api("futures_zh_realtime", symbol="股指期货")
+        if df is not None and not df.empty:
+            for _, row in df.iterrows():
+                symbol = _safe_str(row.get("symbol") or row.get("合约"))
+                if not any(symbol.startswith(t) for t in targets):
+                    continue
+                items.append(FuturesQuote(
+                    symbol=symbol,
+                    name=_safe_str(row.get("name") or symbol),
+                    price=_safe_float(row.get("price") or row.get("最新价")),
+                    change_pct=_safe_float(row.get("change_pct") or row.get("涨跌幅")),
+                    volume=_safe_float(row.get("volume") or row.get("成交量")),
+                    open_interest=_safe_float(row.get("open_interest") or row.get("持仓量")),
+                ))
+    except Exception:
+        logger.exception("获取期指夜盘失败")
+
+    _cache.set(cache_key, items, CACHE_TTL_FUTURES)
+    return items
+
+
+# ── 3. 北向资金当日净流入 ──
+def get_northbound_flow() -> NorthboundFlow | None:
+    """获取北向资金最近一日净流入。"""
+    cache_key = "northbound_flow"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        df = call_akshare_api("stock_hsgt_north_net_flow_in_em", symbol="北上")
+        if df is None or df.empty:
+            return None
+        row = df.iloc[-1]
+        flow = NorthboundFlow(
+            trade_date=_safe_str(row.get("date") or row.get("日期")),
+            sh_net_amount=_safe_float(row.get("sh") or row.get("沪股通")) / 100000000,
+            sz_net_amount=_safe_float(row.get("sz") or row.get("深股通")) / 100000000,
+            total_net=_safe_float(row.get("value") or row.get("北上资金")) / 100000000,
+        )
+        _cache.set(cache_key, flow, CACHE_TTL_HSGT)
+        return flow
+    except Exception:
+        logger.exception("获取北向资金失败")
+        return None
+
+
+# ── 4. 龙虎榜(指定日期) ──
+def get_longhubang(trade_date: date | None = None) -> list[LonghubangItem]:
+    """获取龙虎榜个股明细。默认最近一个交易日。"""
+    target_date = trade_date or _latest_trade_date()
+    cache_key = f"longhubang:{target_date.isoformat()}"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    items: list[LonghubangItem] = []
+    try:
+        df = call_akshare_api(
+            "stock_lhb_detail_em",
+            start_date=target_date.strftime("%Y%m%d"),
+            end_date=target_date.strftime("%Y%m%d"),
+        )
+        if df is None or df.empty:
+            return []
+        for _, row in df.iterrows():
+            items.append(LonghubangItem(
+                symbol=_strip_exchange_prefix(_safe_str(row.get("代码"))),
+                name=_safe_str(row.get("名称")),
+                change_pct=_safe_float(row.get("涨跌幅")),
+                net_amount=_safe_float(row.get("龙虎榜净买额") or row.get("净买额")),
+                reason=_safe_str(row.get("上榜原因")),
+                institution_buy=_safe_float(row.get("机构买入额") or 0),
+                institution_sell=_safe_float(row.get("机构卖出额") or 0),
+            ))
+    except Exception:
+        logger.exception("获取龙虎榜失败")
+
+    _cache.set(cache_key, items, CACHE_TTL_LHB)
+    return items
+
+
+# ── 5. 指数日线(用于技术面分析) ──
+def get_index_daily_bars(symbol: str = "sh000001", days: int = 20) -> list[IndexDailyBar]:
+    """获取指数最近 N 日 K 线。symbol 例:sh000001(上证)/sz399006(创业板指)。"""
+    cache_key = f"index_daily:{symbol}:{days}"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    bars: list[IndexDailyBar] = []
+    try:
+        df = call_akshare_api("stock_zh_index_daily", symbol=symbol)
+        if df is not None and not df.empty:
+            for _, row in df.tail(days).iterrows():
+                bars.append(IndexDailyBar(
+                    trade_date=str(row.get("date")),
+                    open=_safe_float(row.get("open")),
+                    close=_safe_float(row.get("close")),
+                    high=_safe_float(row.get("high")),
+                    low=_safe_float(row.get("low")),
+                    volume=_safe_float(row.get("volume")),
+                ))
+    except Exception:
+        logger.exception("获取指数日线失败 symbol=%s", symbol)
+
+    _cache.set(cache_key, bars, CACHE_TTL_HISTORY)
+    return bars
+
+
+# ── 6. 行业板块资金流 ──
+def get_sector_fund_flow() -> list[SectorFlow]:
+    """获取行业板块当日资金流向。"""
+    cache_key = "sector_fund_flow"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    items: list[SectorFlow] = []
+    try:
+        df = call_akshare_api(
+            "stock_sector_fund_flow_rank",
+            indicator="今日", sector_type="行业资金流",
+        )
+        if df is not None and not df.empty:
+            for _, row in df.iterrows():
+                items.append(SectorFlow(
+                    name=_safe_str(row.get("名称")),
+                    change_pct=_safe_float(row.get("今日涨跌幅") or row.get("涨跌幅")),
+                    main_net_inflow=_safe_float(row.get("今日主力净流入-净额") or 0),
+                    main_net_pct=_safe_float(row.get("今日主力净流入-净占比") or 0),
+                    leading_stock=_safe_str(row.get("今日主力净流入最大股") or ""),
+                ))
+    except Exception:
+        logger.exception("获取行业资金流失败")
+
+    _cache.set(cache_key, items, CACHE_TTL_SECTOR_FLOW)
+    return items
+
+
+# ── 7. 今日财报披露 ──
+def get_earnings_calendar(target_date: date | None = None) -> list[CatalystEvent]:
+    """获取指定日期的财报披露名单。"""
+    d = target_date or _latest_trade_date()
+    cache_key = f"earnings_calendar:{d.isoformat()}"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    items: list[CatalystEvent] = []
+    try:
+        # akshare 提供按季度的财报披露日历
+        df = call_akshare_api(
+            "stock_yjbb_em",
+            date=d.strftime("%Y%m%d"),
+        )
+        if df is not None and not df.empty:
+            for _, row in df.head(50).iterrows():
+                items.append(CatalystEvent(
+                    event_type="earnings",
+                    symbol=_strip_exchange_prefix(_safe_str(row.get("股票代码"))),
+                    name=_safe_str(row.get("股票简称")),
+                    trade_date=d.isoformat(),
+                    detail=f"营收 {_safe_str(row.get('营业总收入-营业总收入'))}, "
+                           f"净利润 {_safe_str(row.get('净利润-净利润'))}",
+                ))
+    except Exception:
+        logger.exception("获取财报披露失败")
+
+    _cache.set(cache_key, items, CACHE_TTL_CALENDAR)
+    return items
+
+
+# ── 8. 解禁名单 ──
+def get_unlock_calendar(target_date: date | None = None) -> list[CatalystEvent]:
+    """获取指定日期解禁名单。"""
+    d = target_date or _latest_trade_date()
+    cache_key = f"unlock_calendar:{d.isoformat()}"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    items: list[CatalystEvent] = []
+    try:
+        df = call_akshare_api(
+            "stock_restricted_release_queue_em",
+            start_date=d.strftime("%Y%m%d"),
+            end_date=d.strftime("%Y%m%d"),
+        )
+        if df is not None and not df.empty:
+            for _, row in df.iterrows():
+                items.append(CatalystEvent(
+                    event_type="unlock",
+                    symbol=_strip_exchange_prefix(_safe_str(row.get("代码"))),
+                    name=_safe_str(row.get("名称")),
+                    trade_date=d.isoformat(),
+                    detail=f"解禁数量 {_safe_str(row.get('解禁数量(股)'))}, "
+                           f"占总股本 {_safe_str(row.get('占总股本比例'))}",
+                ))
+    except Exception:
+        logger.exception("获取解禁名单失败")
+
+    _cache.set(cache_key, items, CACHE_TTL_CALENDAR)
+    return items
+
+
+# ── 9. 新股申购日历 ──
+def get_ipo_calendar() -> list[CatalystEvent]:
+    """获取近期新股申购清单。"""
+    cache_key = "ipo_calendar"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    items: list[CatalystEvent] = []
+    try:
+        df = call_akshare_api("stock_xgsglb_em", symbol="全部股票")
+        if df is not None and not df.empty:
+            today = date.today()
+            from datetime import timedelta
+            window_end = today + timedelta(days=7)
+            for _, row in df.head(100).iterrows():
+                raw_date = _safe_str(row.get("申购日期"))
+                try:
+                    purchase_date = pd.to_datetime(raw_date).date()
+                except Exception:
+                    continue
+                if not (today - timedelta(days=1) <= purchase_date <= window_end):
+                    continue
+                items.append(CatalystEvent(
+                    event_type="ipo",
+                    symbol=_strip_exchange_prefix(_safe_str(row.get("股票代码"))),
+                    name=_safe_str(row.get("股票简称")),
+                    trade_date=purchase_date.isoformat(),
+                    detail=f"发行价 {_safe_str(row.get('发行价格'))}, "
+                           f"申购上限 {_safe_str(row.get('申购上限'))}",
+                ))
+    except Exception:
+        logger.exception("获取新股申购失败")
+
+    _cache.set(cache_key, items, CACHE_TTL_CALENDAR)
+    return items
+
+
+# ── 11. 除权除息事件 ──
+@dataclass
+class DividendEvent:
+    """单只股票一次除权除息记录。"""
+    symbol: str
+    ex_date: str               # 除权除息日 YYYY-MM-DD
+    cash_dividend: float       # 每股现金分红(税后,元)
+    bonus_ratio: float         # 每股送股(10送 X → X/10)
+    transfer_ratio: float      # 每股转增(10转 X → X/10)
+
+
+def get_dividend_events(symbol: str, lookback_days: int = 365) -> list[DividendEvent]:
+    """获取个股近 N 日除权除息记录。
+
+    akshare 数据源:stock_history_dividend(返回历史送转/分红事件,字段格式不太统一)。
+    本函数做防御性解析:任何字段缺失都跳过。
+    """
+    cache_key = f"dividend:{symbol}:{lookback_days}"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    events: list[DividendEvent] = []
+    try:
+        df = call_akshare_api("stock_history_dividend_detail", symbol=symbol, indicator="分红")
+        if df is None or df.empty:
+            _cache.set(cache_key, events, CACHE_TTL_CALENDAR)
+            return events
+        from datetime import timedelta as _td
+        cutoff = date.today() - _td(days=lookback_days)
+        for _, row in df.iterrows():
+            ex_date_raw = _safe_str(row.get("除权除息日") or row.get("除权日"))
+            try:
+                ex_date = pd.to_datetime(ex_date_raw).date()
+            except Exception:
+                continue
+            if ex_date < cutoff:
+                continue
+            # 解析"派10送X转Y"格式
+            plan = _safe_str(row.get("方案") or row.get("分红方案")).replace(" ", "")
+            cash_per_share = _safe_float(row.get("派息(元/股)") or row.get("派息") or 0)
+            bonus_ratio = _safe_float(row.get("送股") or row.get("送股(股/10股)") or 0) / 10
+            transfer_ratio = _safe_float(row.get("转增") or row.get("转增(股/10股)") or 0) / 10
+            events.append(DividendEvent(
+                symbol=symbol,
+                ex_date=ex_date.isoformat(),
+                cash_dividend=cash_per_share,
+                bonus_ratio=bonus_ratio,
+                transfer_ratio=transfer_ratio,
+            ))
+    except Exception:
+        logger.debug("获取除权除息失败 symbol=%s", symbol, exc_info=True)
+
+    _cache.set(cache_key, events, CACHE_TTL_CALENDAR)
+    return events
+
+
+# ── 10. 融资融券余额 ──
+def get_margin_balance() -> MarginBalance | None:
+    """获取最近一日两融余额。"""
+    cache_key = "margin_balance"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    try:
+        df_sh = call_akshare_api("stock_margin_sse")
+        df_sz = call_akshare_api("stock_margin_szse")
+        if (df_sh is None or df_sh.empty) and (df_sz is None or df_sz.empty):
+            return None
+
+        sh_finance = sh_securities = sz_finance = sz_securities = 0.0
+        last_date = ""
+
+        if df_sh is not None and not df_sh.empty:
+            row = df_sh.iloc[-1]
+            sh_finance = _safe_float(
+                row.get("融资余额") or row.get("融资余额(元)") or 0
+            ) / 100000000
+            sh_securities = _safe_float(
+                row.get("融券余额") or row.get("融券余额(元)") or 0
+            ) / 100000000
+            last_date = _safe_str(row.get("信用交易日期") or row.get("交易日期"))
+        if df_sz is not None and not df_sz.empty:
+            row = df_sz.iloc[-1]
+            sz_finance = _safe_float(
+                row.get("融资余额") or row.get("融资余额(元)") or 0
+            ) / 100000000
+            sz_securities = _safe_float(
+                row.get("融券余额") or row.get("融券余额(元)") or 0
+            ) / 100000000
+            if not last_date:
+                last_date = _safe_str(row.get("信用交易日期") or row.get("交易日期"))
+
+        balance = MarginBalance(
+            trade_date=last_date,
+            financing_balance=sh_finance + sz_finance,
+            securities_balance=sh_securities + sz_securities,
+            total_balance=sh_finance + sz_finance + sh_securities + sz_securities,
+        )
+        _cache.set(cache_key, balance, CACHE_TTL_MARGIN)
+        return balance
+    except Exception:
+        logger.exception("获取两融余额失败")
+        return None

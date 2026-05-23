@@ -1,132 +1,111 @@
 /**
- * 使用说明页面客户端组件
+ * 使用说明页面（中国金融审美重构）
  *
- * 以分区卡片形式展示平台各功能模块的使用指南：
- *  - 快速开始（注册/登录 → 创建研究员 → 查看分析）
- *  - AI研究员（创建/雇佣/工作台）
- *  - 极睿社区（浏览/发帖/互动）
- *  - 盘前速览（市场概览/行情数据）
- *  - 资讯分析（新闻筛选/AI分析）
- *  - 极睿实验室（知识库/技能/MCP市场）
- *  - 常见问题FAQ
+ * 顶部：SectionHeading「使用说明」+ 副标题
+ * 主区：6 张步骤卡（grid-cols-3 md / 单列 sm），每卡 emoji + 思源宋体标题 + 12.5px 正文 + 操作按钮
+ * 主题：🚀 3 分钟上手 / 🤖 研究员是什么 / ⚡ 算力如何计费 / 📊 模拟交易 / 📚 投喂私域知识 / ⚠️ 风险提示
+ *
+ * 底部：常见问题 + 联系入口（保留原内容，视觉迁移到 PageCard）。
  */
 'use client';
 
-import { Collapse, Divider, Steps, Tag, Typography } from 'antd';
-import {
-  AppstoreOutlined,
-  BookOutlined,
-  DashboardOutlined,
-  ExperimentOutlined,
-  FileSearchOutlined,
-  QuestionCircleOutlined,
-  RobotOutlined,
-  RocketOutlined,
-  TeamOutlined,
-} from '@ant-design/icons';
+import Link from 'next/link';
+import type { Route } from 'next';
+import { Collapse } from 'antd';
 
-/** 单个指南区块的数据结构 */
-interface GuideSection {
+import { PageCard } from '@/components/ui/page-card';
+import { SectionHeading } from '@/components/ui/section-heading';
+
+/** 步骤卡数据结构 */
+interface GuideCard {
+  /** 表情图标（28px 显示） */
+  emoji: string;
+  /** 卡片标题（思源宋体） */
   title: string;
-  icon: React.ReactNode;
-  color: string;
-  description: string;
-  steps: string[];
+  /** 正文（12.5px） */
+  body: string;
+  /** 按钮文案 */
+  cta: string;
+  /** 按钮目标（路由） */
+  href: string;
+  /** 按钮类型 */
+  ctaType?: 'primary' | 'default';
+  /** 强调条颜色 */
+  accent?: 'brand' | 'gold' | 'up' | 'down';
 }
 
-/** 平台功能模块指南配置 */
-const guideSections: GuideSection[] = [
+/** 6 个核心场景 */
+const GUIDE_CARDS: GuideCard[] = [
   {
-    title: '快速开始',
-    icon: <RocketOutlined />,
-    color: 'from-violet-50 to-violet-100/50 border-violet-200',
-    description: '三步上手极睿智投平台，从注册到获取第一份AI分析报告。',
-    steps: [
-      '注册/登录账号：点击右上角头像进入登录页面，使用手机号+密码注册并登录。',
-      '创建或雇佣研究员：前往「极睿实验室 → 创建研究员」自建，或在「人才市场」挑选现成的专业研究员。',
-      '查看AI分析：回到「AI研究员」工作台，选中研究员即可查看其最新制品、模拟持仓和工作日志。',
-      '浏览资讯：前往「盘前速览」和「资讯分析」获取实时市场行情与AI解读。',
-    ],
+    emoji: '🚀',
+    title: '3 分钟上手',
+    body: '注册登录 → 雇佣首位研究员 → 查看 AI 早间研判。无需配置，开箱即用。',
+    cta: '开始体验',
+    href: '/',
+    ctaType: 'primary',
+    accent: 'brand',
   },
   {
-    title: 'AI研究员',
-    icon: <RobotOutlined />,
-    color: 'from-blue-50 to-blue-100/50 border-blue-200',
-    description: '管理你的AI投研助手，查看实时分析报告与模拟交易。',
-    steps: [
-      '进入「AI研究员」页面，左侧面板显示所有已雇佣的研究员列表。',
-      '点击任意研究员切换到其工作台，查看今日收益、标签和30日胜率。',
-      '「概览」Tab 展示最新制品（横向滚动卡片）、模拟账户持仓和工作日志。',
-      '「设置」Tab（开发中）将支持调整研究员的技能配置、知识库关联与提示词。',
-    ],
+    emoji: '🤖',
+    title: '研究员是什么',
+    body: '研究员是为你工作的 AI 投研助手，每个都有独立策略、知识库与产出物，支持自建或雇佣。',
+    cta: '了解研究员',
+    href: '/researchers',
+    accent: 'brand',
   },
   {
-    title: '极睿社区',
-    icon: <TeamOutlined />,
-    color: 'from-emerald-50 to-emerald-100/50 border-emerald-200',
-    description: '与其他用户交流投研心得，分享策略见解。',
-    steps: [
-      '进入「极睿社区」页面，通过顶部 Tab 切换全部/物价/热门分类。',
-      '使用搜索框快速查找感兴趣的帖子。',
-      '点击帖子卡片打开详情抽屉，查看完整内容和评论。',
-      '点击右上角「+ 发布」按钮，填写标题、正文和标签发布新帖。',
-    ],
+    emoji: '⚡',
+    title: '算力如何计费',
+    body: '所有 AI 任务消耗「电池」算力，按 token 与模型档位计费。会员享 7~9 折，每月赠送额度。',
+    cta: '查看账户',
+    href: '/billing',
+    accent: 'gold',
   },
   {
-    title: '盘前速览',
-    icon: <DashboardOutlined />,
-    color: 'from-amber-50 to-amber-100/50 border-amber-200',
-    description: '开盘前快速了解市场全貌，把握当日热点。',
-    steps: [
-      '进入「盘前速览」页面，顶部展示核心市场指标（新开户数/胜率/换手率等）。',
-      '左侧「A股资讯」展示重要新闻，右侧「盘前热门解读」聚合AI观点。',
-      '下方股票表格支持涨/跌 Tab 切换，产业涨跌面积图直观呈现板块表现。',
-      '底部24小时热股解析帮助你锁定市场关注焦点。',
-    ],
+    emoji: '📊',
+    title: '模拟交易',
+    body: '虚拟资金 100 万元起步，跟踪研究员的策略复盘真实盘面，不涉及真实下单与资金风险。',
+    cta: '进入模拟盘',
+    href: '/trading',
+    accent: 'up',
   },
   {
-    title: '资讯分析',
-    icon: <FileSearchOutlined />,
-    color: 'from-rose-50 to-rose-100/50 border-rose-200',
-    description: '多维度资讯筛选与AI智能解读。',
-    steps: [
-      '进入「资讯分析」页面，左侧通过 Segmented Tab 切换全部/精选/公告/研报分类。',
-      '开启「只看重要」开关过滤非关键信息，点击热股标签按股票维度筛选。',
-      '右侧「AI智能分析」面板提供四大维度：市场总结、热点追踪、市场变盘、行业关注。',
-      '下方「24小时热股解析」排行榜按热度分数排列，帮助发现市场热点。',
-    ],
+    emoji: '📚',
+    title: '投喂私域知识',
+    body: '上传研报、公告、笔记到「我的知识库」，研究员将基于你的资料做检索增强分析（RAG）。',
+    cta: '管理知识库',
+    href: '/lab',
+    accent: 'brand',
   },
   {
-    title: '极睿实验室',
-    icon: <ExperimentOutlined />,
-    color: 'from-cyan-50 to-cyan-100/50 border-cyan-200',
-    description: '配置研究员能力：知识库、技能包、MCP数据源。',
-    steps: [
-      '「我的知识库」：创建专属知识库，上传研报、公告等文档供研究员检索。',
-      '「创建研究员」：自定义AI研究员，配置其名称、等级、技能和提示词。',
-      '「人才市场」：浏览市场上公开的研究员，一键雇佣适合自己风格的助手。',
-      '「技能市场」：发现和安装技能包（如K线分析、事件追踪等），增强研究员能力。',
-      '「MCP市场」：接入MCP服务器获取实时行情数据、Level2、公告全文检索等能力。',
-    ],
+    emoji: '⚠️',
+    title: '风险提示',
+    body: 'AI 输出仅供研究参考，不构成投资建议。市场有风险，决策请独立判断并控制仓位。',
+    cta: '阅读合规说明',
+    href: '#',
+    accent: 'down',
   },
 ];
 
 /** 常见问题列表 */
-const faqItems = [
+const FAQ_ITEMS = [
   {
     key: '1',
-    label: '如何创建我的第一个AI研究员？',
-    children: '前往「极睿实验室 → 创建研究员」，点击「创建研究员」按钮，填写名称、等级、简介等信息即可。创建后可在「AI研究员」工作台中查看和管理。',
+    label: '如何创建我的第一个 AI 研究员？',
+    children:
+      '前往「极睿实验室 → 创建研究员」，点击「创建研究员」按钮，填写名称、等级、简介等信息即可。创建后可在「AI 研究员」工作台中查看和管理。',
   },
   {
     key: '2',
     label: '雇佣研究员和自己创建有什么区别？',
-    children: '雇佣研究员是使用其他用户公开发布的研究员配置，适合快速上手；自建研究员可以完全自定义策略、知识库和提示词，灵活度更高。',
+    children:
+      '雇佣研究员是使用其他用户公开发布的研究员配置，适合快速上手；自建研究员可以完全自定义策略、知识库和提示词，灵活度更高。',
   },
   {
     key: '3',
     label: '知识库支持哪些文件格式？',
-    children: '目前支持 PDF、Word（.docx）、TXT、Markdown 等文本格式，后续将支持更多格式。单个文件大小限制为 50MB。',
+    children:
+      '目前支持 PDF、Word（.docx）、TXT、Markdown 等文本格式，后续将支持更多格式。单个文件大小限制为 50MB。',
   },
   {
     key: '4',
@@ -135,8 +114,9 @@ const faqItems = [
   },
   {
     key: '5',
-    label: 'MCP市场是什么？',
-    children: 'MCP（Model Context Protocol）市场提供各种数据源服务器的接入能力，如实时行情、K线数据、公告检索等，让AI研究员获取实时市场数据。',
+    label: 'MCP 市场是什么？',
+    children:
+      'MCP（Model Context Protocol）市场提供各种数据源服务器的接入能力，如实时行情、K 线数据、公告检索等，让 AI 研究员获取实时市场数据。',
   },
   {
     key: '6',
@@ -145,80 +125,87 @@ const faqItems = [
   },
 ];
 
+/** 按钮样式映射 —— 用 Tailwind 写定，不引入 antd Button 以保持设计一致 */
+function CtaButton({
+  type = 'default',
+  accent = 'brand',
+  href,
+  children,
+}: {
+  type?: 'primary' | 'default';
+  accent?: GuideCard['accent'];
+  href: string;
+  children: React.ReactNode;
+}) {
+  const baseColorMap: Record<NonNullable<GuideCard['accent']>, { bg: string; text: string; border: string }> = {
+    brand: { bg: 'bg-brand-600 hover:bg-brand-700', text: 'text-white', border: 'border-brand-600' },
+    gold: { bg: 'bg-gold-500 hover:bg-gold-600', text: 'text-white', border: 'border-gold-500' },
+    up: { bg: 'bg-up-500 hover:bg-up-600', text: 'text-white', border: 'border-up-500' },
+    down: { bg: 'bg-down-500 hover:bg-down-600', text: 'text-white', border: 'border-down-500' },
+  };
+  const c = baseColorMap[accent ?? 'brand'];
+
+  const primaryCls = `${c.bg} ${c.text} ${c.border}`;
+  const defaultCls = 'bg-white text-ink-800 border-ink-100 hover:border-brand-400 hover:text-brand-600';
+
+  return (
+    <Link
+      href={href as Route}
+      className={[
+        'inline-flex items-center justify-center rounded-md border px-3.5 py-1.5 text-[12.5px] font-medium transition-colors',
+        type === 'primary' ? primaryCls : defaultCls,
+      ].join(' ')}
+    >
+      {children}
+      <span className="ml-1">→</span>
+    </Link>
+  );
+}
+
 export function UserGuidePageClient() {
   return (
-    <div className="mx-auto max-w-4xl space-y-6">
+    <div className="mx-auto max-w-6xl space-y-6">
       {/* 页面标题 */}
-      <div className="text-center">
-        <Typography.Title level={2} className="!mb-2">
-          使用说明
-        </Typography.Title>
-        <Typography.Text type="secondary" className="text-base">
-          了解极睿智投平台的核心功能，快速上手AI智能投研
-        </Typography.Text>
+      <SectionHeading title="使用说明" subtitle="10 分钟上手极睿智投 · 5 个核心场景" />
+
+      {/* 6 张步骤卡 */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        {GUIDE_CARDS.map((card) => (
+          <PageCard key={card.title} accent={card.accent ?? 'brand'}>
+            <div className="card-bd">
+              {/* 大 emoji */}
+              <div style={{ fontSize: 28, lineHeight: 1 }} aria-hidden>
+                {card.emoji}
+              </div>
+
+              {/* 思源宋体标题 */}
+              <div className="serif mt-3 text-[18px] font-bold text-ink-900">{card.title}</div>
+
+              {/* 正文 */}
+              <p className="mt-2 text-[12.5px] leading-[1.7] text-ink-600">{card.body}</p>
+
+              {/* 操作按钮 */}
+              <div className="mt-4">
+                <CtaButton type={card.ctaType ?? 'default'} accent={card.accent} href={card.href}>
+                  {card.cta}
+                </CtaButton>
+              </div>
+            </div>
+          </PageCard>
+        ))}
       </div>
 
-      {/* 功能指南卡片 */}
-      {guideSections.map((section, index) => (
-        <div
-          key={section.title}
-          className={`rounded-xl border bg-gradient-to-br p-6 ${section.color}`}
-        >
-          {/* 卡片头部 */}
-          <div className="mb-4 flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white text-lg shadow-sm">
-              {section.icon}
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <Typography.Title level={4} className="!mb-0">
-                  {section.title}
-                </Typography.Title>
-                <Tag color="purple" className="!text-xs">
-                  {index === 0 ? '入门' : '功能'}
-                </Tag>
-              </div>
-              <Typography.Text type="secondary" className="text-sm">
-                {section.description}
-              </Typography.Text>
-            </div>
-          </div>
-
-          {/* 步骤列表 */}
-          <Steps
-            direction="vertical"
-            size="small"
-            current={-1}
-            items={section.steps.map((step, i) => ({
-              title: (
-                <span className="text-sm text-slate-700">{step}</span>
-              ),
-              status: 'wait' as const,
-            }))}
-            className="!mt-2"
-          />
-        </div>
-      ))}
-
-      <Divider />
-
       {/* 常见问题 */}
-      <div className="rounded-xl bg-white p-6">
-        <div className="mb-4 flex items-center gap-3">
-          <QuestionCircleOutlined className="text-xl text-brand-500" />
-          <Typography.Title level={4} className="!mb-0">
-            常见问题
-          </Typography.Title>
-        </div>
+      <PageCard title="常见问题" subtitle="高频咨询与解答" accent="brand">
         <Collapse
-          items={faqItems}
+          items={FAQ_ITEMS}
           bordered={false}
           className="!bg-transparent"
         />
-      </div>
+      </PageCard>
 
       {/* 底部提示 */}
-      <div className="rounded-lg bg-brand-50 p-4 text-center text-sm text-brand-600">
+      <div className="rounded-2xl border border-brand-100 bg-brand-50/60 px-5 py-4 text-center text-[13px] text-brand-700">
         还有其他问题？欢迎在「极睿社区」发帖交流，或联系我们的客服团队。
       </div>
     </div>

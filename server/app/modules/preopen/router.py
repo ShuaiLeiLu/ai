@@ -8,9 +8,10 @@ from __future__ import annotations
 import asyncio
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_optional_session
+from app.api.deps import db_session_dependency, get_optional_session
 from app.core.container import get_container
 from app.modules.preopen.schemas import (
     AiDigest,
@@ -24,6 +25,10 @@ from app.modules.preopen.schemas import (
     TrendOverview,
 )
 from app.modules.preopen.service import PreopenService
+from app.modules.preopen.skill_service import (
+    run_preopen_chain,
+    stream_preopen_chain,
+)
 from app.modules.preopen import snapshots
 from app.modules.preopen.snapshot_cache import load_snapshot_or_empty
 from app.schemas.common import ApiResponse, ListResponse
@@ -88,6 +93,43 @@ async def hot_news() -> ApiResponse[ListResponse[HotNewsItem]]:
 async def ai_digest() -> ApiResponse[AiDigest]:
     """盘前 AI 解读 —— 仅返回真实 LLM 分析结果。"""
     data = await service.generate_ai_digest_with_llm()
+    return ApiResponse(data=data)
+
+
+@router.get("/ai-digest-v2/stream")
+async def ai_digest_v2_stream(
+    session: AsyncSession = Depends(db_session_dependency),
+) -> StreamingResponse:
+    """盘前 AI 解读 v2 —— SSE 流式输出 skill chain 各阶段事件。
+
+    事件类型:
+      - started:整体启动
+      - skill_started:某 skill 开始
+      - skill_chunk:synthesis 类 skill 流式文本片段
+      - skill_completed:某 skill 完成
+      - skill_failed:某 skill 失败
+      - done:整体完成
+      - persisted:digest 已落库
+      - error:服务级错误
+    """
+    return StreamingResponse(
+        stream_preopen_chain(session),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+@router.get("/ai-digest-v2")
+async def ai_digest_v2(
+    session: AsyncSession = Depends(db_session_dependency),
+) -> ApiResponse[dict]:
+    """盘前 AI 解读 v2 —— 非流式版本(供测试 / 调度任务调用)。"""
+    data = await run_preopen_chain(session)
+    await session.commit()
     return ApiResponse(data=data)
 
 

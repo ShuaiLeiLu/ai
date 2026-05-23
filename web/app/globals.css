@@ -2,12 +2,22 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ──────────────────────────────────────────────
+ * 全局设计令牌
+ *   颜色见 tailwind.config（ink / brand / up / down / gold）
+ * ────────────────────────────────────────────── */
 :root {
   color-scheme: light;
-  --page-bg: #f8f9fa;
-  --page-text: #0f172a;
+  --page-bg: #fbfaf7;          /* 宣纸底 */
+  --page-text: #2a2620;        /* 墨色文字 */
   --panel-bg: #ffffff;
-  --panel-border: rgba(15, 23, 42, 0.04);
+  --panel-border: rgba(23, 20, 16, 0.06);
+  --panel-border-strong: rgba(23, 20, 16, 0.1);
+  --brand: #1d4a34;            /* 松烟墨 */
+  --brand-hover: #143929;
+  --up: #c0362c;               /* 朱砂红 - 涨 */
+  --down: #1f7f4a;             /* 青翠 - 跌 */
+  --gold: #c89a3a;             /* 神州金 */
 }
 
 * {
@@ -24,44 +34,237 @@ body {
 }
 
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-family: var(--font-inter), 'Inter', -apple-system, BlinkMacSystemFont,
+    'PingFang SC', 'HarmonyOS Sans SC', 'Microsoft YaHei', 'Hiragino Sans GB',
+    sans-serif;
+  font-feature-settings: 'tnum' on;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* 彻底隐藏所有滚动条，同时保持滚动功能 */
-*::-webkit-scrollbar {
-  display: none !important;
-  width: 0 !important;
-  height: 0 !important;
-}
-
-* {
-  -ms-overflow-style: none !important;  /* IE and Edge */
-  scrollbar-width: none !important;  /* Firefox */
-}
-
-/* 确保 html 和 body 也不显示滚动条 */
-html, body {
+html,
+body {
   overflow-x: hidden;
+}
+
+/* 轻量滚动条 —— 桌面端保留可见但收窄 */
+@media (pointer: fine) {
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: rgba(23, 20, 16, 0.12);
+    border-radius: 4px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: rgba(23, 20, 16, 0.2);
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+/* 移动端隐藏滚动条 */
+@media (pointer: coarse) {
+  *::-webkit-scrollbar {
+    display: none;
+  }
+  * {
+    scrollbar-width: none;
+  }
+}
+
+/* 通用过渡 */
+.ant-btn,
+.ant-menu-item,
+a {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ──────────────────────────────────────────────
+ * Ant Design 主题覆盖
+ *   仅覆盖必要项目，不再用 !important 大面积污染
+ * ────────────────────────────────────────────── */
+.ant-layout {
+  background: var(--page-bg);
+}
+
+/* 主按钮 = 品牌松烟墨 */
+.ant-btn-primary {
+  background-color: var(--brand);
+  border-color: var(--brand);
+  box-shadow: 0 4px 12px rgba(29, 74, 52, 0.22);
+  border-radius: 10px;
+}
+.ant-btn-primary:not(:disabled):hover {
+  background-color: var(--brand-hover) !important;
+  border-color: var(--brand-hover) !important;
+}
+
+/* 侧栏菜单 */
+.workstation-menu {
+  background: transparent !important;
+  border-inline-end: 0 !important;
+}
+.workstation-menu .ant-menu-item,
+.workstation-menu .ant-menu-submenu-title {
+  border-radius: 10px !important;
+  color: #4a443a;
+  font-size: 13.5px;
+  margin-block: 2px;
+  padding-inline: 12px !important;
+}
+.workstation-menu .ant-menu-item:hover,
+.workstation-menu .ant-menu-submenu-title:hover {
+  background-color: rgba(29, 74, 52, 0.05) !important;
+  color: var(--brand) !important;
+}
+.workstation-menu .ant-menu-item-selected {
+  background-color: rgba(29, 74, 52, 0.08) !important;
+  color: var(--brand) !important;
+  font-weight: 600;
+}
+.workstation-menu .ant-menu-item-selected::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 16px;
+  border-radius: 2px;
+  background: var(--brand);
+}
+
+/* AntD Card 全局基线 —— 让 PageCard 不需要再覆写 */
+.ant-card {
+  border-radius: 14px;
+  border-color: var(--panel-border);
+}
+
+/* ──────────────────────────────────────────────
+ * 通用工具类
+ * ────────────────────────────────────────────── */
+
+/* 数字等宽对齐 —— 财务/价格场景 */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' on, 'lnum' on;
+}
+
+/* 中文衬线（思源宋体）—— 通过 next/font 注入 --font-serif-sc */
+.serif {
+  font-family: var(--font-serif-sc), 'Noto Serif SC', 'STSong', 'SimSun', serif;
+  letter-spacing: 0.01em;
+}
+
+/* 涨跌方向标 —— 红涨绿跌（中国 A 股） */
+.dir-up {
+  color: var(--up);
+}
+.dir-down {
+  color: var(--down);
+}
+.dir-flat {
+  color: #4a443a;
+}
+
+/* 卡片左侧强调条 */
+.title-bar::before {
+  content: '';
+  display: inline-block;
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--brand);
+  margin-right: 8px;
+  vertical-align: -2px;
+}
+.title-bar-gold::before {
+  background: var(--gold);
+}
+.title-bar-up::before {
+  background: var(--up);
+}
+
+/* 心跳脉冲 —— 实时状态 */
+.pulse-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--down);
+  display: inline-block;
+  box-shadow: 0 0 0 0 rgba(47, 158, 96, 0.5);
+  animation: pulse 1.8s infinite;
+}
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(47, 158, 96, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgba(47, 158, 96, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(47, 158, 96, 0);
+  }
+}
+
+/* 横向滚动隐藏滚动条（保留功能） */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
 
-html::-webkit-scrollbar, body::-webkit-scrollbar {
-  display: none;
+/* 安全区：移动端底部 TabBar */
+.safe-bottom {
+  padding-bottom: calc(env(safe-area-inset-bottom) + 8px);
 }
 
-/* 全局交互平滑过渡 */
-.ant-btn, .ant-menu-item, .ant-card, a {
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
-}
+/* ──────────────────────────────────────────────
+ * 旧代码兼容：把 Tailwind 的冷调 slate 重映射到温润 ink
+ *   原 globals.css 用大量 !important 覆盖，现改为依赖
+ *   样式表加载顺序（在 @tailwind utilities 之后），相同
+ *   选择器后定义即可覆盖。
+ * ────────────────────────────────────────────── */
+.text-slate-900 { color: #171410; }
+.text-slate-800 { color: #2a2620; }
+.text-slate-700 { color: #34302a; }
+.text-slate-600 { color: #4a443a; }
+.text-slate-500 { color: #5d564b; }
+.text-slate-400 { color: #7a7264; }
+.text-slate-300 { color: #9a907d; }
+.text-slate-200 { color: #b8b0a0; }
+.text-slate-100 { color: #d9d4c8; }
 
-/* 移除 Ant Design 默认的圆角和过重的边框 */
-.ant-btn {
-  box-shadow: none !important;
-}
+.bg-slate-50   { background-color: #f5f3ee; }
+.bg-slate-100  { background-color: #ece9e1; }
+.bg-slate-200  { background-color: #d9d4c8; }
+.bg-slate-300  { background-color: #b8b0a0; }
+.bg-slate-400  { background-color: #9a907d; }
 
-.ant-layout {
-  background: var(--page-bg) !important;
-}
+.border-slate-50  { border-color: #ece9e1; }
+.border-slate-100 { border-color: rgba(23, 20, 16, 0.06); }
+.border-slate-200 { border-color: rgba(23, 20, 16, 0.1); }
+
+/* hover 变体 */
+.hover\:bg-slate-50:hover { background-color: #f5f3ee; }
+.hover\:bg-slate-100:hover { background-color: #ece9e1; }
+.hover\:text-slate-700:hover { color: #34302a; }
+.hover\:text-slate-800:hover { color: #2a2620; }
+.hover\:text-slate-900:hover { color: #171410; }
+
+/* 旧 rose-* 上涨色 → 朱砂红 */
+.text-rose-500 { color: #d8453a; }
+.text-rose-600 { color: #c0362c; }
+.bg-rose-50    { background-color: #fdecec; }
+
+/* 旧 emerald/green 下跌色 → 青翠 */
+.text-emerald-500 { color: #2f9e60; }
+.text-emerald-600 { color: #1f7f4a; }
+.text-green-500   { color: #2f9e60; }
+.text-green-600   { color: #1f7f4a; }
+
