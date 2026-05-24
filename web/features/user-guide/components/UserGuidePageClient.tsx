@@ -56,7 +56,7 @@ const GUIDE_CARDS: GuideCard[] = [
   {
     emoji: '⚡',
     title: '算力如何计费',
-    body: '所有 AI 任务消耗「电池」算力，按 token 与模型档位计费。会员享 7~9 折，每月赠送额度。',
+    body: '所有 AI 任务消耗「算力」，按 token 与模型档位计费。会员享 7~9 折，每月赠送额度。',
     cta: '查看账户',
     href: '/billing',
     accent: 'gold',

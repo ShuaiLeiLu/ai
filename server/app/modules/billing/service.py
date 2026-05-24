@@ -9,7 +9,7 @@ from app.repositories.user_repo import UserRepository
 
 
 class BillingService:
-    """会员与电池账本服务，只保留真实数据库路径。"""
+    """会员与算力账本服务，只保留真实数据库路径。"""
 
     async def async_list_ledger(
         self, session: AsyncSession, user_id: str, *, limit: int = 50
@@ -66,4 +66,9 @@ class BillingService:
 
     async def async_list_packages(self, session: AsyncSession) -> list[BatteryPackage]:
         del session
-        return []
+        return [
+            BatteryPackage(package_id="power_1000", name="1,000 算力", battery_count=1_000, price=9.9),
+            BatteryPackage(package_id="power_5000", name="5,000 算力", battery_count=5_000, price=39),
+            BatteryPackage(package_id="power_15000", name="15,000 算力", battery_count=15_000, price=99),
+            BatteryPackage(package_id="power_50000", name="50,000 算力", battery_count=50_000, price=299),
+        ]

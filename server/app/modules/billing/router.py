@@ -42,5 +42,5 @@ async def list_battery_ledger(
 async def list_battery_packages(
     session: AsyncSession | None = Depends(get_optional_session),
 ) -> ApiResponse[ListResponse[BatteryPackage]]:
-    items = await service.async_list_packages(session) if session else []
+    items = await service.async_list_packages(session)
     return ApiResponse(data=ListResponse(items=items, total=len(items)))

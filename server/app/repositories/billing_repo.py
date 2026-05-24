@@ -2,7 +2,7 @@
 计费 Repository —— BatteryLedger / MembershipOrder 表的数据访问层
 
 提供：
-  - 电池流水查询（按时间降序）
+  - 算力流水查询（按时间降序）
   - 套餐订单查询
 """
 from __future__ import annotations
@@ -12,14 +12,14 @@ from app.repositories.base import BaseRepository
 
 
 class BatteryLedgerRepository(BaseRepository[BatteryLedger]):
-    """电池流水数据访问"""
+    """算力流水数据访问"""
 
     model_class = BatteryLedger
 
     async def list_by_user(
         self, user_id: str, *, offset: int = 0, limit: int = 50
     ) -> list[BatteryLedger]:
-        """查询某用户的电池流水（按时间降序）"""
+        """查询某用户的算力流水（按时间降序）"""
         return await self.list_all(
             filters=[BatteryLedger.user_id == user_id],
             order_by=BatteryLedger.created_at.desc(),

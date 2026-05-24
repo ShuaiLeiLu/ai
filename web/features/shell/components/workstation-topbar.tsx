@@ -100,7 +100,7 @@ export function WorkstationTopBar({ onOpenMobileNav, onOpenAi, unreadCount = 0 }
           {user ? user.membership_level : '开通 VIP'}
         </Link>
 
-        {/* 电池余量 */}
+        {/* 算力余量 */}
         <Link href={routes.billing as Route} className="hidden items-center gap-1 px-2 text-[12.5px] font-semibold text-ink-700 hover:text-brand-600 sm:inline-flex">
           <ThunderboltOutlined className="text-gold-500" />
           <span className="tnum">{user?.battery_balance ?? 0}</span>

@@ -162,9 +162,9 @@ const SystemsSection: FC = () => (
         <div className="absolute -right-20 -top-20 w-64 h-64 bg-amber-500/[0.03] rounded-full blur-[100px] group-hover:bg-amber-500/10 transition-colors"></div>
         <div className="relative z-10">
           <ThunderboltOutlined className="text-6xl text-amber-500 mb-8" />
-          <h2 className="text-4xl font-bold text-stone-850 mb-6">电池能源系统</h2>
+          <h2 className="text-4xl font-bold text-stone-850 mb-6">算力能源系统</h2>
           <p className="text-stone-500 text-lg leading-relaxed">
-            “极睿电池”是驱动智元核心的底层能源。每次深度分析、高频监控或研报生成都需消耗电能。我们提供多维补给机制，确保您的 AI 研究引擎时刻保持提示计算的巅峰性能。
+            “极睿算力”是驱动智元核心的底层能源。每次深度分析、高频监控或研报生成都需消耗算力。我们提供多维补给机制，确保您的 AI 研究引擎时刻保持投研计算的巅峰性能。
           </p>
         </div>
       </div>

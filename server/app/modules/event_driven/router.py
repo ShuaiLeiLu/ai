@@ -6,7 +6,7 @@
   GET  /event-driven/themes         31 个题材列表
   GET  /event-driven/themes/{id}    单个题材完整内容（8 大模块）
   GET  /event-driven/they-say       今日「它们说」AI 共识看板
-  POST /event-driven/unlock         单日算力解锁（登录后真实扣减电池）
+  POST /event-driven/unlock         单日算力解锁（登录后真实扣减算力）
 """
 from __future__ import annotations
 

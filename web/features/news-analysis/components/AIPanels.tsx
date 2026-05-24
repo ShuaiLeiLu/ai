@@ -17,16 +17,18 @@ import { useAIPanels } from '@/features/news-analysis/hooks';
 import type { AIPanelData, AIPanelKey } from '@/types/news-analysis';
 import { AIPanelCard } from './AIPanelCard';
 
-/** 四张卡片的 key、标题、颜色配置 */
+/** 四张卡片的 key、标题、描述、图标、颜色配置 */
 const panelConfig: Array<{
   key: AIPanelKey;
   title: string;
-  color: 'blue' | 'orange' | 'red' | 'green';
+  description: string;
+  icon: string;
+  color: 'blue' | 'green' | 'orange' | 'emerald';
 }> = [
-  { key: '24h_digest', title: '市场总结', color: 'blue' },
-  { key: 'hotspot_tracking', title: '热点追踪', color: 'orange' },
-  { key: 'macro_impact', title: '市场变盘', color: 'red' },
-  { key: 'stock_interpretation', title: '行业关注', color: 'green' },
+  { key: '24h_digest', title: '资讯分析', description: '24小时热讯解读', icon: '⚡', color: 'blue' },
+  { key: 'hotspot_tracking', title: '热点追踪', description: '市场热门题材挖掘', icon: '🎯', color: 'green' },
+  { key: 'macro_impact', title: '宏观影响', description: '深远布局决策', icon: '⚠️', color: 'orange' },
+  { key: 'stock_interpretation', title: '个股解读', description: '买卖了然于心', icon: '📊', color: 'emerald' },
 ];
 
 const followupPrompts: Record<AIPanelKey, string[]> = {
@@ -235,17 +237,22 @@ export function AIPanels() {
 
       {(data || loading) && (
         <div className="grid grid-cols-2 gap-3">
-          {panelConfig.map(({ key, title, color }) => {
+          {panelConfig.map(({ key, title, description, icon, color }) => {
             const panel = panelMap.get(key);
             return (
               <AIPanelCard
                 key={key}
                 title={title}
+                description={description}
+                icon={icon}
                 summary={panel?.summary}
                 highlights={panel?.highlights}
                 loading={loading}
                 color={color}
-                onClick={panel ? () => setSelectedPanel(panel) : undefined}
+                onClick={panel ? () => setSelectedPanel({
+                  ...panel,
+                  title: title,
+                }) : undefined}
               />
             );
           })}

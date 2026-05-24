@@ -348,7 +348,7 @@ def _stock_past_events(theme: ThemeListItem, stocks: list[LimitUpStock], snapsho
                 title=title,
                 description=description,
                 impact="high" if stock.consecutive >= 2 else "medium",
-                category="capital",
+                category="sentiment",
                 occurred_at=_today_label(snapshot.generated_at),
                 source="东方财富涨停池",
             )
@@ -1163,7 +1163,7 @@ class EventDrivenService:
         if user.battery_balance < self.unlock_cost:
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                detail=f"算力不足，解锁需要 {self.unlock_cost} 电池，当前余额 {user.battery_balance}",
+                detail=f"算力不足，解锁需要 {self.unlock_cost} 算力，当前余额 {user.battery_balance}",
             )
 
         await user_repo.update_battery(user, -self.unlock_cost)

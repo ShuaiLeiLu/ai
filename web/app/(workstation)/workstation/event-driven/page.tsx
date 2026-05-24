@@ -5,6 +5,7 @@ import { Alert, Empty, Modal, Skeleton, message } from 'antd';
 
 import { PageCard } from '@/components/ui/page-card';
 import { SectionHeading } from '@/components/ui/section-heading';
+import { routes } from '@/lib/constants/routes';
 import { EventDrivenChain } from '@/features/event-driven/components/EventDrivenChain';
 import { ExpectationRadar } from '@/features/event-driven/components/ExpectationRadar';
 import { MarketStory } from '@/features/event-driven/components/MarketStory';
@@ -464,17 +465,25 @@ function UnlockBanner({
       <div>
         <div className="serif text-[14px] font-bold text-ink-900">VIP 专属深度内容</div>
         <div className="mt-0.5 text-[12px] text-ink-500">
-          当前电池 {balance}，单日解锁需 {cost}。解锁后今日内可查看全部题材完整分析。
+          当前算力余额：{balance}。可开通 VIP，或花费 <b className="text-gold-600">{cost} 算力</b> 单日解锁。
         </div>
       </div>
-      <button
-        type="button"
-        onClick={onUnlock}
-        disabled={loading}
-        className="rounded-lg bg-ink-900 px-4 py-2 text-[12px] font-semibold text-gold-500 disabled:cursor-not-allowed disabled:opacity-60"
-      >
-        {loading ? '解锁中...' : '电池解锁'}
-      </button>
+      <div className="flex flex-wrap gap-2">
+        <a
+          href={routes.billing}
+          className="rounded-lg bg-brand-600 px-4 py-2 text-[12px] font-semibold text-white transition hover:bg-brand-700"
+        >
+          开通 VIP
+        </a>
+        <button
+          type="button"
+          onClick={onUnlock}
+          disabled={loading}
+          className="rounded-lg border border-gold-300 bg-white px-4 py-2 text-[12px] font-semibold text-gold-700 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {loading ? '解锁中...' : `单日 ${cost} 算力`}
+        </button>
+      </div>
     </div>
   );
 }
@@ -511,8 +520,8 @@ export default function EventDrivenPage() {
         content: (
           <div className="space-y-3 text-sm leading-relaxed text-ink-500">
             <div>
-              单日解锁需要 <b className="text-gold-600">{cost}</b> 电池，当前余额仅{' '}
-              <b className="text-up-600">{balance}</b> 电池。
+              单日解锁需要 <b className="text-gold-600">{cost}</b> 算力，当前余额仅{' '}
+              <b className="text-up-600">{balance}</b> 算力。
             </div>
             <Alert
               type="warning"
@@ -530,11 +539,23 @@ export default function EventDrivenPage() {
       title: '确认解锁今日题材掘金',
       content: (
         <div className="space-y-2 text-sm leading-relaxed text-ink-500">
-          <div>本次将消耗 <b className="text-gold-600">{cost}</b> 电池，今日内可自由查看本题材完整内容。</div>
-          <div className="flex justify-between rounded-lg bg-ink-25 px-3 py-2 text-xs">
-            <span>解锁后余额</span>
-            <b className="tnum text-brand-700">{Math.max(0, balance - cost)} 电池</b>
+          <div>使用算力单日解锁后，今日内可自由查看本题材完整内容。</div>
+          <div className="space-y-1 rounded-lg border border-dashed border-gold-300 bg-gold-50 px-3 py-2 text-xs">
+            <div className="flex justify-between">
+              <span className="text-ink-400">解锁费用</span>
+              <b className="serif text-[15px] text-gold-700">{cost} 算力</b>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-ink-400">当前余额</span>
+              <span className="tnum text-ink-700">{balance} 算力</span>
+            </div>
+            <div className="border-t border-gold-200 pt-1" />
+            <div className="flex justify-between">
+              <span className="font-semibold text-ink-700">解锁后余额</span>
+              <b className="tnum text-brand-700">{Math.max(0, balance - cost)} 算力</b>
+            </div>
           </div>
+          <Alert type="info" showIcon message="单日有效，今日内可自由查看本题材完整内容。" />
         </div>
       ),
       okText: '确认解锁',
@@ -602,7 +623,7 @@ export default function EventDrivenPage() {
                   </div>
                   {accessQuery.data && (
                     <div className="rounded-[10px] bg-ink-25 px-3 py-2 text-[12px] text-ink-500">
-                      电池余额 <b className="tnum text-ink-900">{accessQuery.data.battery_balance}</b>
+                      算力余额 <b className="tnum text-ink-900">{accessQuery.data.battery_balance}</b>
                     </div>
                   )}
                 </div>

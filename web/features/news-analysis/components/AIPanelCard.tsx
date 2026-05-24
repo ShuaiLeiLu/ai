@@ -1,63 +1,94 @@
 /**
- * AI 分析卡片 —— 带彩色渐变背景的卡片组件
+ * AI 分析卡片 —— 带彩色渐变背景的卡片组件 (1:1 还原设计稿 11B 增强视图)
  *
- * 支持 4 种颜色主题：blue / orange / red / green，
- * 对应目标站上的 市场总结 / 热点追踪 / 市场变盘 / 行业关注 四张卡片。
- * 加载态显示骨架屏，加载完成后显示摘要 + 要点列表。
+ * 支持 4 种颜色主题：blue / green / orange / emerald
+ * 采用高保真深底实色渐变背景（linear-gradient）和亮白文字与要点高亮展现。
  */
-import { Skeleton, Typography } from 'antd';
+'use client';
 
 interface AIPanelCardProps {
   title: string;
+  description: string;
+  icon: string;
   summary?: string;
   highlights?: string[];
   loading: boolean;
-  color?: 'blue' | 'orange' | 'red' | 'green';
+  color?: 'blue' | 'green' | 'orange' | 'emerald';
   onClick?: () => void;
 }
 
-/** 卡片配色映射 (精致金融版) */
-const colorMap = {
-  blue: 'bg-blue-50/30 border-blue-100 text-blue-600',
-  orange: 'bg-amber-50/30 border-amber-100 text-amber-600',
-  red: 'bg-rose-50/30 border-rose-100 text-rose-600',
-  green: 'bg-emerald-50/30 border-emerald-100 text-emerald-600',
+const gradientMap = {
+  blue: 'linear-gradient(135deg, #2196f3, #1565c0)',
+  green: 'linear-gradient(135deg, #6e9d83, #2e6e51)',
+  orange: 'linear-gradient(135deg, #f5a623, #e07e1a)',
+  emerald: 'linear-gradient(135deg, #2f9e60, #1f7f4a)',
 };
 
-export function AIPanelCard({ title, summary, highlights, loading, color = 'blue', onClick }: AIPanelCardProps) {
+export function AIPanelCard({
+  title,
+  description,
+  icon,
+  summary,
+  highlights,
+  loading,
+  color = 'blue',
+  onClick,
+}: AIPanelCardProps) {
+  const gradient = gradientMap[color];
+
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={loading || !summary}
-      className={`group relative w-full overflow-hidden rounded-xl border bg-white p-4 text-left transition-all duration-300 hover:-translate-y-0.5 hover:shadow-fintech disabled:cursor-default disabled:hover:translate-y-0 disabled:hover:shadow-none ${colorMap[color]}`}
+      style={{ background: gradient }}
+      className="group relative w-full overflow-hidden rounded-[14px] p-[14px] text-left text-white transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg disabled:cursor-default disabled:hover:translate-y-0 disabled:hover:shadow-none border-0"
     >
-      {/* 绚丽点缀：极细左侧强调线 */}
-      <div className={`absolute left-0 top-0 h-full w-1 opacity-60 ${color === 'blue' ? 'bg-blue-500' : color === 'orange' ? 'bg-amber-500' : color === 'red' ? 'bg-rose-500' : 'bg-emerald-500'}`}></div>
-
-      <div className="relative z-10">
-        <div className="mb-2 flex items-center justify-between">
-          <span className="text-[12px] font-bold uppercase tracking-wider opacity-80">{title}</span>
-          <div className={`h-1.5 w-1.5 rounded-full ${color === 'blue' ? 'bg-blue-400' : color === 'orange' ? 'bg-amber-400' : color === 'red' ? 'bg-rose-400' : 'bg-emerald-400'}`}></div>
+      <div className="relative z-10 flex flex-col h-full justify-between">
+        {/* Header */}
+        <div>
+          <div className="flex items-center gap-1.5 opacity-95">
+            <span className="text-[16px]">{icon}</span>
+            <span className="text-[12px] font-semibold">{title}</span>
+          </div>
+          
+          {/* Main Title/Description */}
+          <div className="serif text-[14px] font-bold mt-2.5 leading-snug">
+            {description}
+          </div>
         </div>
 
+        {/* Content Section */}
         {loading ? (
-          <Skeleton active paragraph={{ rows: 2, width: '100%' }} title={false} />
-        ) : (
-          <div className="space-y-2">
-            <div className="text-[13px] leading-relaxed text-slate-600 font-medium line-clamp-2 group-hover:text-slate-900 transition-colors">
-              {summary || '暂无分析数据'}
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-               {highlights?.slice(0, 2).map((point, index) => (
-                  <span key={index} className="inline-block px-1.5 py-0.5 rounded bg-white/80 border border-slate-100 text-[10px] text-slate-500 font-medium">
-                     {point}
-                  </span>
-               ))}
+          <div className="mt-3 opacity-60">
+            <div className="animate-pulse space-y-2">
+              <div className="h-3 bg-white/20 rounded w-11/12"></div>
+              <div className="h-3 bg-white/25 rounded w-3/4"></div>
             </div>
           </div>
+        ) : (
+          summary && (
+            <div className="mt-2.5 space-y-2 border-t border-white/15 pt-2 bg-transparent">
+              <div className="text-[12px] leading-relaxed text-white/90 line-clamp-2 font-medium">
+                {summary}
+              </div>
+              {highlights && highlights.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {highlights.slice(0, 2).map((point, index) => (
+                    <span
+                      key={index}
+                      className="inline-block px-1.5 py-0.5 rounded bg-white/15 border border-white/5 text-[10px] text-white/95 font-medium max-w-full truncate"
+                    >
+                      {point}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )
         )}
       </div>
     </button>
   );
 }
+

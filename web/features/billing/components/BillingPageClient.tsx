@@ -2,8 +2,8 @@
  * 账户中心页面 —— 五 Tab 结构（中国金融审美重构）
  *
  * Tab 页签：
- *  1. 个人信息：头像/昵称/手机号/会员等级/电池余额
- *  2. 电池明细：余额统计卡片 + 流水表格
+ *  1. 个人信息：头像/昵称/手机号/会员等级/算力余额
+ *  2. 算力明细：余额统计卡片 + 流水表格
  *  3. 会员套餐：免费版 / 黄金会员 / 钻石会员 三列对比
  *  4. 安全设置：修改密码/更换手机入口
  *  5. 邀请好友：邀请链接 + 奖励规则 + 邀请记录
@@ -20,6 +20,7 @@ import {
   Empty,
   Form,
   Input,
+  Modal,
   Segmented,
   Skeleton,
   Table,
@@ -27,7 +28,10 @@ import {
   message,
 } from 'antd';
 import {
+  AlipayCircleFilled,
+  CheckCircleFilled,
   CopyOutlined,
+  CreditCardOutlined,
   GiftOutlined,
   LockOutlined,
   PhoneOutlined,
@@ -40,14 +44,14 @@ import dayjs from 'dayjs';
 import { PageCard } from '@/components/ui/page-card';
 import { SectionHeading } from '@/components/ui/section-heading';
 import { StatCard } from '@/components/ui/stat-card';
-import { useBatteryLedger, useMembership } from '@/features/billing/hooks';
+import { useBatteryLedger, useBatteryPackages, useMembership } from '@/features/billing/hooks';
 import { useUserSessionStore } from '@/stores/user-session.store';
-import type { BatteryLedgerItem } from '@/types/billing';
+import type { BatteryLedgerItem, BatteryPackage } from '@/types/billing';
 
 /** Tab 枚举 */
 type TabKey = 'profile' | 'battery' | 'plans' | 'security' | 'invite';
 
-// ──────────── 电池明细表格列 ────────────
+// ──────────── 算力明细表格列 ────────────
 const ledgerColumns: ColumnsType<BatteryLedgerItem> = [
   {
     title: '时间',
@@ -91,7 +95,7 @@ interface PlanConfig {
   monthPrice: number;
   /** 年价 */
   yearPrice: number;
-  /** 赠送电池数（>0 显示） */
+  /** 赠送算力数（>0 显示） */
   battery: number;
   /** 特性列表 */
   features: string[];
@@ -107,7 +111,7 @@ const PLANS: PlanConfig[] = [
     monthPrice: 0,
     yearPrice: 0,
     battery: 300,
-    features: ['基础资讯浏览', '社区浏览', '1 个研究员', '300 体验电池'],
+    features: ['基础资讯浏览', '社区浏览', '1 个研究员', '300 体验算力'],
     accent: 'ink',
   },
   {
@@ -249,12 +253,12 @@ function ProfileTab() {
         <Descriptions.Item label="昵称">{user.nickname}</Descriptions.Item>
         <Descriptions.Item label="手机号">{user.phone}</Descriptions.Item>
         <Descriptions.Item label="会员等级">{user.membership_level}</Descriptions.Item>
-        <Descriptions.Item label="电池余额">
+        <Descriptions.Item label="算力余额">
           <span className="tnum font-semibold text-gold-600">{user.battery_balance}</span>
         </Descriptions.Item>
         {membershipQuery.data && (
           <>
-            <Descriptions.Item label="电池折扣">
+            <Descriptions.Item label="算力折扣">
               {(membershipQuery.data.battery_discount * 100).toFixed(0)}%
             </Descriptions.Item>
             <Descriptions.Item label="已解锁权益">
@@ -273,7 +277,7 @@ function ProfileTab() {
   );
 }
 
-// ──────────── Tab 2: 电池明细 ────────────
+// ──────────── Tab 2: 算力明细 ────────────
 function BatteryTab() {
   const user = useUserSessionStore((s) => s.user);
   const ledgerQuery = useBatteryLedger(50);
@@ -288,12 +292,12 @@ function BatteryTab() {
       {/* 余额 + 流水：左大数字进度条，右流水 */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,360px)_1fr]">
         {/* 左：当前余额大数字 + 进度条 */}
-        <PageCard title="算力余额" subtitle="当前可用电池" accent="gold">
+        <PageCard title="算力余额" subtitle="当前可用算力" accent="gold">
           <div className="flex items-baseline gap-2">
             <span className="serif text-[40px] font-bold leading-none text-gold-600 tnum">
               {balance.toLocaleString()}
             </span>
-            <span className="text-sm font-medium text-ink-400">电池</span>
+            <span className="text-sm font-medium text-ink-400">算力</span>
           </div>
           <div className="mt-4">
             <div className="flex items-center justify-between text-[11px] text-ink-400">
@@ -339,6 +343,8 @@ function BatteryTab() {
 function PlansTab() {
   const [cycle, setCycle] = useState<'month' | 'year'>('month');
   const user = useUserSessionStore((s) => s.user);
+  const packagesQuery = useBatteryPackages();
+  const balance = user?.battery_balance ?? 0;
 
   // 当前用户会员（FREE 默认；其他映射 GOLD）—— 用于卡片高亮
   const currentLevel: PlanConfig['level'] = useMemo(() => {
@@ -350,6 +356,8 @@ function PlansTab() {
 
   return (
     <div className="space-y-4">
+      <PowerPackagePanel balance={balance} packages={packagesQuery.data ?? []} loading={packagesQuery.isLoading} />
+
       {/* 月付/年付切换 */}
       <div className="flex justify-center">
         <Segmented
@@ -423,11 +431,11 @@ function PlansTab() {
                 <span className="text-sm text-ink-400">{cycleLabel}</span>
               </div>
 
-              {/* 赠送电池 */}
+              {/* 赠送算力 */}
               {plan.battery > 0 && (
                 <div className="mt-1 text-[12px] text-gold-600">
                   <ThunderboltOutlined className="mr-1" />
-                  赠送 {plan.battery.toLocaleString()} 电池
+                  赠送 {plan.battery.toLocaleString()} 算力
                 </div>
               )}
 
@@ -470,6 +478,147 @@ function PlansTab() {
         })}
       </div>
     </div>
+  );
+}
+
+function PowerPackagePanel({
+  balance,
+  packages,
+  loading,
+}: {
+  balance: number;
+  packages: BatteryPackage[];
+  loading: boolean;
+}) {
+  const fallbackPackages: BatteryPackage[] = [
+    { package_id: 'power_1000', name: '1,000 算力', battery_count: 1_000, price: 9.9 },
+    { package_id: 'power_5000', name: '5,000 算力', battery_count: 5_000, price: 39 },
+    { package_id: 'power_15000', name: '15,000 算力', battery_count: 15_000, price: 99 },
+    { package_id: 'power_50000', name: '50,000 算力', battery_count: 50_000, price: 299 },
+  ];
+  const items = packages.length > 0 ? packages : fallbackPackages;
+  const [selectedPackageId, setSelectedPackageId] = useState('power_5000');
+  const [paymentMethod, setPaymentMethod] = useState<'wechat' | 'alipay' | 'bank'>('wechat');
+  const [successOpen, setSuccessOpen] = useState(false);
+  const selectedPackage = items.find((item) => item.package_id === selectedPackageId) ?? items[1] ?? items[0];
+  const paymentOptions = [
+    { key: 'wechat' as const, label: '微信支付', icon: <span className="text-[20px]">💚</span> },
+    { key: 'alipay' as const, label: '支付宝', icon: <AlipayCircleFilled className="text-[20px] text-brand-600" /> },
+    { key: 'bank' as const, label: '银行卡', icon: <CreditCardOutlined className="text-[20px] text-ink-500" /> },
+  ];
+
+  return (
+    <>
+      <PageCard title="算力充值" subtitle="充值算力包 · 支持后续 AI 对话、研报生成与题材解锁" accent="gold">
+        <div className="mb-4 flex flex-col gap-2 rounded-xl border border-gold-200 bg-gold-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="text-[11.5px] text-ink-500">当前算力余额</div>
+            <div className="serif text-[26px] font-bold text-gold-700 tnum">{balance.toLocaleString()}</div>
+          </div>
+          <div className="text-[11.5px] text-ink-500">普通对话约 1-5 算力 · 深度任务约 20-50 算力</div>
+        </div>
+
+        {loading ? (
+          <Skeleton active paragraph={{ rows: 3 }} />
+        ) : (
+          <>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+              {items.map((item) => {
+                const hot = item.battery_count === 5_000;
+                const selected = item.package_id === selectedPackage?.package_id;
+                return (
+                  <button
+                    key={item.package_id}
+                    type="button"
+                    onClick={() => setSelectedPackageId(item.package_id)}
+                    className={[
+                      'relative rounded-[14px] border bg-white p-4 text-left transition hover:-translate-y-0.5 hover:shadow-card',
+                      selected ? 'border-gold-500 bg-gradient-to-br from-gold-50 to-white shadow-gold' : 'border-ink-50',
+                    ].join(' ')}
+                  >
+                    {hot && (
+                      <span className="absolute -top-2 right-3 rounded-full bg-gold-500 px-2 py-0.5 text-[10.5px] font-bold text-white">
+                        热销
+                      </span>
+                    )}
+                    <div className={`serif text-[17px] font-bold ${selected ? 'text-gold-700' : 'text-ink-900'}`}>
+                      {item.name}
+                    </div>
+                    <div className="mt-1 text-[11.5px] text-ink-400">
+                      约 {Math.round(item.battery_count / 5).toLocaleString()} 次普通对话
+                    </div>
+                    <div className="mt-3 text-[22px] font-bold text-ink-900 tnum">¥ {item.price}</div>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="mt-4 border-t border-ink-50 pt-4">
+              <div className="mb-2 text-[11px] tracking-[2px] text-ink-400">支付方式</div>
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+                {paymentOptions.map((option) => {
+                  const selected = paymentMethod === option.key;
+                  return (
+                    <button
+                      key={option.key}
+                      type="button"
+                      onClick={() => setPaymentMethod(option.key)}
+                      className={[
+                        'flex items-center gap-2 rounded-[10px] border px-3 py-2 text-left text-[13px] font-semibold',
+                        selected ? 'border-brand-300 bg-brand-50 text-brand-700' : 'border-ink-50 bg-white text-ink-700',
+                      ].join(' ')}
+                    >
+                      {option.icon}
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="mt-4 flex flex-col gap-3 rounded-xl bg-ink-25 px-4 py-3 md:flex-row md:items-center">
+              <span className="text-[12.5px] text-ink-500">应付金额</span>
+              <span className="serif text-[24px] font-bold text-up-600 tnum">¥ {selectedPackage?.price ?? 0}</span>
+              <span className="text-[11.5px] text-ink-400">
+                充值后余额约 {((selectedPackage?.battery_count ?? 0) + balance).toLocaleString()} 算力
+              </span>
+              <Button type="primary" className="md:!ml-auto" onClick={() => setSuccessOpen(true)}>
+                立即支付
+              </Button>
+            </div>
+          </>
+        )}
+      </PageCard>
+
+      <Modal open={successOpen} footer={null} onCancel={() => setSuccessOpen(false)} width={420}>
+        <div className="py-5 text-center">
+          <div className="mx-auto grid h-[72px] w-[72px] place-items-center rounded-full bg-up-50">
+            <CheckCircleFilled className="text-[42px] text-up-600" />
+          </div>
+          <div className="serif mt-4 text-[22px] font-bold text-ink-900">支付成功</div>
+          <p className="mt-1 text-[12.5px] text-ink-500">
+            {selectedPackage?.name ?? '算力包'} 已加入账户，当前为模拟支付状态。
+          </p>
+          <div className="mt-4 rounded-[10px] border border-ink-50 bg-ink-25 px-4 py-3 text-left text-[12.5px]">
+            <div className="flex justify-between">
+              <span className="text-ink-400">订单内容</span>
+              <b className="text-ink-800">{selectedPackage?.name ?? '-'}</b>
+            </div>
+            <div className="mt-1 flex justify-between">
+              <span className="text-ink-400">支付金额</span>
+              <b className="tnum text-up-600">¥ {selectedPackage?.price ?? 0}</b>
+            </div>
+            <div className="mt-1 flex justify-between">
+              <span className="text-ink-400">支付方式</span>
+              <span>{paymentOptions.find((option) => option.key === paymentMethod)?.label}</span>
+            </div>
+          </div>
+          <Button type="primary" block className="!mt-4" onClick={() => setSuccessOpen(false)}>
+            完成
+          </Button>
+        </div>
+      </Modal>
+    </>
   );
 }
 
@@ -599,10 +748,10 @@ function InviteTab() {
       {msgCtx}
 
       {/* 邀请主卡 —— 深绿渐变 */}
-      <PageCard tone="dark" title="邀请好友 · 赢取算力" subtitle="双方得 100 电池 / VIP 额外 500" accent="gold">
+      <PageCard tone="dark" title="邀请好友 · 赢取算力" subtitle="双方得 100 算力 / VIP 额外 500" accent="gold">
         <div className="mb-3 flex items-center gap-2 text-[13px] text-ink-0/70">
           <GiftOutlined className="text-gold-400" />
-          邀请好友注册极睿智投，双方各得 100 电池；好友开通 VIP 后额外奖励 500 电池！
+          邀请好友注册极睿智投，双方各得 100 算力；好友开通 VIP 后额外奖励 500 算力！
         </div>
         <div className="flex flex-col gap-2 sm:flex-row">
           <Input
@@ -624,7 +773,7 @@ function InviteTab() {
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <StatCard label="已邀请人数" value={0} />
         <StatCard label="开通 VIP 人数" value={0} />
-        <StatCard label="已获奖励电池" value={0} hint="累计金额" />
+        <StatCard label="已获奖励算力" value={0} hint="累计金额" />
       </div>
 
       {/* 奖励规则 */}
@@ -636,7 +785,7 @@ function InviteTab() {
             </span>
             <span>
               好友通过你的链接注册成功，你和好友各获得{' '}
-              <strong className="text-gold-600">100 电池</strong>
+              <strong className="text-gold-600">100 算力</strong>
             </span>
           </div>
           <div className="flex items-start gap-3">
@@ -645,7 +794,7 @@ function InviteTab() {
             </span>
             <span>
               好友开通任意 VIP 套餐，你额外获得{' '}
-              <strong className="text-gold-600">500 电池</strong>
+              <strong className="text-gold-600">500 算力</strong>
             </span>
           </div>
           <div className="flex items-start gap-3">
@@ -671,7 +820,7 @@ export function BillingPageClient() {
 
   const tabOptions = [
     { label: '个人信息', value: 'profile' },
-    { label: '电池明细', value: 'battery' },
+    { label: '算力明细', value: 'battery' },
     { label: '会员套餐', value: 'plans' },
     { label: '安全设置', value: 'security' },
     { label: '邀请好友', value: 'invite' },

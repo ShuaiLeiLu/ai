@@ -27,7 +27,7 @@ class UserRepository(BaseRepository[User]):
         return result.scalar_one_or_none()
 
     async def update_battery(self, user: User, delta: int) -> User:
-        """增减电池余额（正数充入，负数消耗），返回更新后的用户"""
+        """增减算力余额（正数充入，负数消耗），返回更新后的用户"""
         user.battery_balance += delta
         await self.session.flush()
         await self.session.refresh(user)

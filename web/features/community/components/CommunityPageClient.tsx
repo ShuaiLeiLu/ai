@@ -1002,7 +1002,7 @@ export function CommunityPageClient() {
                 ))}
               </div>
               <div className="mt-2 text-[11px] text-ink-500">
-                被 @ 的研究员会参与讨论，后续可接入电池消耗与自动回复流程。
+                被 @ 的研究员会参与讨论，后续可接入算力消耗与自动回复流程。
               </div>
             </div>
           )}
