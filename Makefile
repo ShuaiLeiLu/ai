@@ -3,12 +3,13 @@ PYTHON ?= python3
 VENV ?= .venv
 ACTIVATE = . $(VENV)/bin/activate
 
-.PHONY: help install-web install-server dev-web dev-api dev-worker dev-beat up down test-api lint-web typecheck-web
+.PHONY: help install-web install-server dev dev-web dev-api dev-worker dev-beat up down test-api lint-web typecheck-web
 
 help:
 	@echo "Available targets:"
 	@echo "  install-web      Install frontend dependencies"
 	@echo "  install-server   Create virtualenv and install backend dependencies"
+	@echo "  dev              Run frontend and backend together"
 	@echo "  dev-web          Run Next.js frontend"
 	@echo "  dev-api          Run FastAPI application"
 	@echo "  dev-worker       Run Celery worker"
@@ -25,6 +26,9 @@ install-web:
 install-server:
 	$(PYTHON) -m venv $(VENV)
 	$(ACTIVATE) && pip install --upgrade pip && pip install -r ./server/requirements-dev.txt
+
+dev:
+	./scripts/dev.sh
 
 dev-web:
 	cd web && $(PNPM) dev

@@ -94,18 +94,26 @@ def test_get_theme_builds_detail_from_market_snapshot(monkeypatch: pytest.Monkey
     assert any(gap.direction == "overvalued" for gap in detail.expectation_gaps)
 
 
-def test_get_theme_falls_back_when_market_sources_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_empty_market_sources_do_not_fall_back_to_mock(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         event_service,
         "_load_market_snapshot",
         lambda: MarketSnapshot(pool=[], boards=[], news=[], generated_at=datetime(2026, 5, 24, tzinfo=timezone.utc)),
     )
 
+    themes = EventDrivenService().list_themes()
     detail = EventDrivenService().get_theme("semiconductor")
 
-    assert detail is not None
-    assert detail.limit_up_count == 13
-    assert detail.consensus.summary == "强共识 · 主流方向高度一致"
+    assert themes == []
+    assert detail is None
+
+
+def test_unmatched_theme_is_not_returned(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(event_service, "_load_market_snapshot", _snapshot)
+
+    detail = EventDrivenService().get_theme("education")
+
+    assert detail is None
 
 
 @pytest.mark.asyncio

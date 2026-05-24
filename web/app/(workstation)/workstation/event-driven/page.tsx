@@ -81,7 +81,7 @@ function MetricStrip({
   const items = [
     { label: '题材状态', value: STATUS_LABEL[status] },
     { label: '涨停数量', value: `${limitUpCount} 只` },
-    { label: '研究员覆盖', value: `${researcherCount} 位` },
+    { label: '观点覆盖', value: researcherCount > 0 ? `${researcherCount} 位` : '未接入' },
     { label: '共识状态', value: consensus },
   ];
   return (
@@ -103,7 +103,7 @@ function HiddenLogicPanel({ items }: { items: HiddenLogicItem[] }) {
   return (
     <PageCard
       title="暗线逻辑"
-      subtitle="AI 发现的隐藏关联"
+      subtitle="由涨停池行业映射派生"
       accent="brand"
       extra={
         items.length > 2 ? (
@@ -174,7 +174,7 @@ function AnchorPanel({ items }: { items: AnchorRecommendItem[] }) {
 
 function ScenarioPanel({ items }: { items: Scenario[] }) {
   return (
-    <PageCard title="明日推演" subtitle="AI 预判 3 种场景" accent="up">
+    <PageCard title="情景观察" subtitle="仅展示已接入的真实推演数据" accent="up">
       {items.length === 0 ? (
         <div className="py-6 text-center text-[12px] text-ink-400">暂无推演场景</div>
       ) : (
@@ -240,7 +240,7 @@ function OpinionPanel({ items }: { items: ResearcherOpinion[] }) {
     <>
       <PageCard
         title="观点汇集"
-        subtitle={`共 ${groupedOpinions.length} 位研究员 · ${items.length} 条观点`}
+        subtitle={`真实观点源 · ${groupedOpinions.length} 位 · ${items.length} 条`}
         accent="brand"
         extra={
           items.length > 0 ? (
@@ -282,7 +282,7 @@ function OpinionPanel({ items }: { items: ResearcherOpinion[] }) {
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <div className="rounded-[10px] border border-ink-50 bg-ink-25 px-4 py-3">
-              <div className="text-[11px] text-ink-400">研究员覆盖</div>
+              <div className="text-[11px] text-ink-400">观点源覆盖</div>
               <div className="serif mt-1 text-[20px] font-bold text-ink-900">{groupedOpinions.length} 位</div>
             </div>
             <div className="rounded-[10px] border border-ink-50 bg-ink-25 px-4 py-3">
@@ -455,7 +455,7 @@ function UnlockBanner({
   if (vip || unlockedToday) {
     return (
       <div className="rounded-[10px] border border-brand-100 bg-brand-50 px-4 py-3 text-[12px] text-brand-700">
-        已解锁今日题材掘金完整内容，8 大子模块可自由查看。
+        已解锁今日题材掘金真实市场快照详情。
       </div>
     );
   }
@@ -539,7 +539,7 @@ export default function EventDrivenPage() {
       title: '确认解锁今日题材掘金',
       content: (
         <div className="space-y-2 text-sm leading-relaxed text-ink-500">
-          <div>使用算力单日解锁后，今日内可自由查看本题材完整内容。</div>
+          <div>使用算力单日解锁后，今日内可自由查看本题材真实市场快照详情。</div>
           <div className="space-y-1 rounded-lg border border-dashed border-gold-300 bg-gold-50 px-3 py-2 text-xs">
             <div className="flex justify-between">
               <span className="text-ink-400">解锁费用</span>
@@ -555,7 +555,7 @@ export default function EventDrivenPage() {
               <b className="tnum text-brand-700">{Math.max(0, balance - cost)} 算力</b>
             </div>
           </div>
-          <Alert type="info" showIcon message="单日有效，今日内可自由查看本题材完整内容。" />
+          <Alert type="info" showIcon message="单日有效，今日内可自由查看本题材真实市场快照详情。" />
         </div>
       ),
       okText: '确认解锁',
@@ -577,7 +577,7 @@ export default function EventDrivenPage() {
       {messageContext}
       <SectionHeading
         title="题材掘金"
-        subtitle="AI研究员共识看板 · 题材分类 · 涨停统计 · 事件驱动链"
+        subtitle="真实市场快照 · 题材分类 · 涨停统计 · 事件驱动链"
         actions={
           <span className="flex items-center gap-1.5">
             <span className="pulse-dot" />
@@ -589,7 +589,7 @@ export default function EventDrivenPage() {
       {theySayQuery.isLoading && <LoadingCard rows={4} />}
       {!theySayQuery.isLoading && theySayQuery.data && <TheySayBoard data={theySayQuery.data} />}
       {!theySayQuery.isLoading && theySayQuery.isError && (
-        <EmptyCard title="它们说 · AI 研究员共识看板" description="AI 研究员分析异常，请稍后重试" />
+        <EmptyCard title="市场快照概览" description="真实市场快照加载异常，请稍后重试" />
       )}
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[340px_minmax(0,1fr)]">
@@ -598,6 +598,8 @@ export default function EventDrivenPage() {
             <LoadingCard rows={12} />
           ) : themesQuery.isError ? (
             <EmptyCard title="题材列表" description="加载题材数据失败" />
+          ) : themes.length === 0 ? (
+            <EmptyCard title="题材列表" description="当前未获取到真实市场题材数据" />
           ) : (
             <ThemeListSidebar themes={themes} activeId={selectedId} onSelect={setActiveId} generatedAt={generatedAt} />
           )}
@@ -618,7 +620,7 @@ export default function EventDrivenPage() {
                     <div className="text-[11px] font-semibold tracking-[2px] text-brand-600">THEME MINING</div>
                     <h2 className="serif mt-1 text-[28px] font-bold text-ink-900">{detail.name}</h2>
                     <p className="mt-1 max-w-3xl text-[12.5px] leading-[1.7] text-ink-500">
-                      汇总市场事件、研究员共识、资金盘口与未来催化，形成可追踪的题材推演链。
+                      汇总涨停池、行业板块与实时快讯，形成可追踪的真实市场题材链。
                     </p>
                   </div>
                   {accessQuery.data && (

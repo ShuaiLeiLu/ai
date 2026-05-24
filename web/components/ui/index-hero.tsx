@@ -57,6 +57,49 @@ function buildSpark(values: number[]) {
  */
 export function IndexHero({ mood, quotes }: IndexHeroProps) {
   const cols = quotes.length || 4;
+  const renderQuote = (q: IndexQuote) => {
+    const dir = dirOf(q.changePercent);
+    const arrow = dir === 'up' ? '▲' : dir === 'down' ? '▼' : '—';
+    const textColor =
+      dir === 'up'
+        ? 'text-up-600'
+        : dir === 'down'
+          ? 'text-down-600'
+          : 'text-ink-800';
+    const strokeColor =
+      dir === 'up' ? '#c0362c' : dir === 'down' ? '#1f7f4a' : '#7a7264';
+    const sparkPath = buildSpark(q.spark ?? []);
+
+    return (
+      <div key={q.code} className="min-w-0">
+        <div className="truncate text-[11.5px] tracking-wide text-ink-600">{q.name}</div>
+        <div className={['mt-0.5 text-[20px] font-bold leading-tight tnum sm:text-[24px]', textColor].join(' ')}>
+          {fmt(q.value)}
+        </div>
+        <div className={['mt-0.5 text-[11.5px] font-semibold tnum', textColor].join(' ')}>
+          {arrow} {q.change >= 0 ? '+' : ''}
+          {fmt(q.change)} · {q.changePercent >= 0 ? '+' : ''}
+          {q.changePercent.toFixed(2)}%
+        </div>
+        {sparkPath && (
+          <svg
+            className="mt-1 hidden h-[22px] w-full sm:block"
+            viewBox="0 0 100 24"
+            preserveAspectRatio="none"
+          >
+            <polyline
+              points={sparkPath}
+              fill="none"
+              stroke={strokeColor}
+              strokeWidth={1.5}
+              vectorEffect="non-scaling-stroke"
+            />
+          </svg>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div
       className="relative mb-5 overflow-hidden rounded-2xl border border-ink-50 bg-paper-warm p-4 shadow-card sm:p-5 lg:p-6"
@@ -67,8 +110,27 @@ export function IndexHero({ mood, quotes }: IndexHeroProps) {
         className="pointer-events-none absolute -right-12 -top-12 h-56 w-56 rounded-full"
         style={{ background: 'radial-gradient(circle, rgba(200,154,58,.12), transparent 70%)' }}
       />
+      <div className="relative grid gap-4 sm:hidden">
+        {mood && (
+          <div>
+            {mood.label && (
+              <div className="text-[11px] tracking-[2px] text-ink-400">{mood.label}</div>
+            )}
+            <div className="mt-1 serif text-2xl font-bold text-brand-700">
+              {mood.value}
+            </div>
+            {mood.sub && (
+              <div className="mt-1.5 text-[12px] leading-relaxed text-ink-600">{mood.sub}</div>
+            )}
+          </div>
+        )}
+        <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+          {quotes.map(renderQuote)}
+        </div>
+      </div>
+
       <div
-        className="relative grid gap-4 sm:gap-6"
+        className="relative hidden gap-4 sm:grid sm:gap-6"
         style={{
           gridTemplateColumns: mood
             ? `minmax(0, 1.3fr) repeat(${cols}, minmax(0, 1fr))`
@@ -88,47 +150,7 @@ export function IndexHero({ mood, quotes }: IndexHeroProps) {
             )}
           </div>
         )}
-        {quotes.map((q) => {
-          const dir = dirOf(q.changePercent);
-          const arrow = dir === 'up' ? '▲' : dir === 'down' ? '▼' : '—';
-          const textColor =
-            dir === 'up'
-              ? 'text-up-600'
-              : dir === 'down'
-                ? 'text-down-600'
-                : 'text-ink-800';
-          const strokeColor =
-            dir === 'up' ? '#c0362c' : dir === 'down' ? '#1f7f4a' : '#7a7264';
-          const sparkPath = buildSpark(q.spark ?? []);
-          return (
-            <div key={q.code} className="min-w-0">
-              <div className="truncate text-[11.5px] tracking-wide text-ink-600">{q.name}</div>
-              <div className={['mt-0.5 text-[20px] sm:text-[24px] font-bold leading-tight tnum', textColor].join(' ')}>
-                {fmt(q.value)}
-              </div>
-              <div className={['mt-0.5 text-[11.5px] font-semibold tnum', textColor].join(' ')}>
-                {arrow} {q.change >= 0 ? '+' : ''}
-                {fmt(q.change)} · {q.changePercent >= 0 ? '+' : ''}
-                {q.changePercent.toFixed(2)}%
-              </div>
-              {sparkPath && (
-                <svg
-                  className="mt-1 hidden h-[22px] w-full sm:block"
-                  viewBox="0 0 100 24"
-                  preserveAspectRatio="none"
-                >
-                  <polyline
-                    points={sparkPath}
-                    fill="none"
-                    stroke={strokeColor}
-                    strokeWidth={1.5}
-                    vectorEffect="non-scaling-stroke"
-                  />
-                </svg>
-              )}
-            </div>
-          );
-        })}
+        {quotes.map(renderQuote)}
       </div>
     </div>
   );

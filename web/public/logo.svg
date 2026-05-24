@@ -1,5 +1,23 @@
 <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <path d="M6 26L26 6M26 6H18M26 6V14" stroke="#7c3aed" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M26 26L6 6" stroke="#c4b5fd" stroke-width="3.5" stroke-linecap="round"/>
-  <rect x="13" y="13" width="6" height="6" rx="1" transform="rotate(45 16 16)" fill="#7c3aed"/>
+  <defs>
+    <linearGradient id="brandGradient" x1="5" y1="5" x2="27" y2="27" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2e6e51"/>
+      <stop offset="1" stop-color="#143929"/>
+    </linearGradient>
+    <radialGradient id="goldGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(25 7) rotate(132.51) scale(16.2799)">
+      <stop stop-color="#c89a3a" stop-opacity=".34"/>
+      <stop offset="1" stop-color="#c89a3a" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect x="2" y="2" width="28" height="28" rx="8" fill="url(#brandGradient)"/>
+  <rect x="2" y="2" width="28" height="28" rx="8" fill="url(#goldGlow)"/>
+  <text
+    x="16"
+    y="21"
+    fill="#ffffff"
+    font-family="Noto Serif SC, Songti SC, STSong, serif"
+    font-size="17"
+    font-weight="700"
+    text-anchor="middle"
+  >极</text>
 </svg>

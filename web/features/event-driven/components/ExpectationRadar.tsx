@@ -1,4 +1,4 @@
-/** 预期差雷达 · AI 发现的认知偏差 */
+/** 预期差雷达 · 由市场快照规则派生 */
 import { PageCard } from '@/components/ui/page-card';
 import type { ExpectationGap } from '@/features/event-driven/types';
 
@@ -8,7 +8,7 @@ interface Props {
 
 export function ExpectationRadar({ items }: Props) {
   return (
-    <PageCard title="🎯 预期差雷达 · AI 发现的认知偏差" accent="gold">
+    <PageCard title="🎯 预期差雷达 · 市场快照派生" accent="gold">
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         {items.map((g) => {
           const isUnder = g.direction === 'undervalued';

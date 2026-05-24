@@ -1,4 +1,4 @@
-/** 它们说 · AI 研究员共识看板（深绿渐变 Hero） */
+/** 市场快照概览（深绿渐变 Hero） */
 import type { TheySayBoard as TheySayBoardData } from '@/features/event-driven/types';
 
 interface Props {
@@ -33,13 +33,13 @@ export function TheySayBoard({ data }: Props) {
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="serif text-[22px] font-bold">它们说 · AI 研究员共识看板</h2>
+            <h2 className="serif text-[22px] font-bold">市场快照概览</h2>
             <span className="rounded-full border border-gold-500/40 bg-gold-500/20 px-2 py-[2px] text-[11px] text-gold-300">
               {formatTimestamp(data.generated_at)} 生成
             </span>
           </div>
           <div className="mt-1 text-[12px] text-white/60">
-            基于 {data.bullish_count + data.neutral_count + data.bearish_count} 位活跃研究员的盘后共识分析
+            基于涨停池与行业板块真实快照派生
           </div>
         </div>
       </div>
