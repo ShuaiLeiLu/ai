@@ -84,9 +84,19 @@ async def _refresh_target(redis: Any, service: PreopenService, target: RefreshTa
         await release_snapshot_lock(redis, target.spec.name, token)
 
 
-async def refresh_preopen_group(redis_factory: RedisFactory, group_name: str) -> None:
+async def refresh_preopen_group(
+    redis_factory: RedisFactory,
+    group_name: str,
+    *,
+    force: bool = False,
+) -> None:
+    """刷新一组盘前快照。
+
+    Args:
+        force: 强制刷新，忽略交易时段限制（用于启动初始化、人工触发等场景）
+    """
     group = PREOPEN_REFRESH_GROUPS[group_name]
-    if group.trading_hours_only and not is_a_share_trading_hours():
+    if not force and group.trading_hours_only and not is_a_share_trading_hours():
         logger.info("[盘前快照] 当前非交易时段，跳过 %s 刷新", group.name)
         return
 
@@ -96,12 +106,18 @@ async def refresh_preopen_group(redis_factory: RedisFactory, group_name: str) ->
     for target in group.targets:
         if await _refresh_target(redis, service, target):
             refreshed += 1
-    logger.info("[盘前快照] 分组 %s 刷新结束：%d/%d", group.name, refreshed, len(group.targets))
+    logger.info(
+        "[盘前快照] 分组 %s 刷新结束：%d/%d%s",
+        group.name,
+        refreshed,
+        len(group.targets),
+        " (force)" if force else "",
+    )
 
 
-async def refresh_all_preopen_groups(redis_factory: RedisFactory) -> None:
+async def refresh_all_preopen_groups(redis_factory: RedisFactory, *, force: bool = False) -> None:
     for group in PREOPEN_REFRESH_GROUPS.values():
-        await refresh_preopen_group(redis_factory, group.name)
+        await refresh_preopen_group(redis_factory, group.name, force=force)
 
 
 PREOPEN_REFRESH_GROUPS: dict[str, RefreshGroup] = {

@@ -13,6 +13,7 @@ interface AIPanelCardProps {
   highlights?: string[];
   loading: boolean;
   color?: 'blue' | 'orange' | 'red' | 'green';
+  onClick?: () => void;
 }
 
 /** 卡片配色映射 (精致金融版) */
@@ -23,9 +24,14 @@ const colorMap = {
   green: 'bg-emerald-50/30 border-emerald-100 text-emerald-600',
 };
 
-export function AIPanelCard({ title, summary, highlights, loading, color = 'blue' }: AIPanelCardProps) {
+export function AIPanelCard({ title, summary, highlights, loading, color = 'blue', onClick }: AIPanelCardProps) {
   return (
-    <div className={`group relative overflow-hidden rounded-xl border bg-white p-4 transition-all duration-300 hover:shadow-fintech ${colorMap[color]}`}>
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={loading || !summary}
+      className={`group relative w-full overflow-hidden rounded-xl border bg-white p-4 text-left transition-all duration-300 hover:-translate-y-0.5 hover:shadow-fintech disabled:cursor-default disabled:hover:translate-y-0 disabled:hover:shadow-none ${colorMap[color]}`}
+    >
       {/* 绚丽点缀：极细左侧强调线 */}
       <div className={`absolute left-0 top-0 h-full w-1 opacity-60 ${color === 'blue' ? 'bg-blue-500' : color === 'orange' ? 'bg-amber-500' : color === 'red' ? 'bg-rose-500' : 'bg-emerald-500'}`}></div>
 
@@ -52,6 +58,6 @@ export function AIPanelCard({ title, summary, highlights, loading, color = 'blue
           </div>
         )}
       </div>
-    </div>
+    </button>
   );
 }

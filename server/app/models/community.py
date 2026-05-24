@@ -43,3 +43,4 @@ class Comment(Base, TimestampMixin):
     like_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     post = relationship("Post", back_populates="comments")
+    author = relationship("User", lazy="selectin")

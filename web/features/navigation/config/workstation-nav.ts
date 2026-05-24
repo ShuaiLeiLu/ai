@@ -5,6 +5,7 @@ import {
   CompassOutlined,
   DashboardOutlined,
   DatabaseOutlined,
+  FireOutlined,
   FileSearchOutlined,
   FileTextOutlined,
   LineChartOutlined,
@@ -40,6 +41,10 @@ export const workstationNavGroups: NavGroup[] = [
     title: '核心工作台',
     items: [
       { key: 'overview', label: '盘前速览', href: routes.preopen, icon: DashboardOutlined },
+      { key: 'event-driven', label: '题材掘金', href: routes.eventDriven, icon: FireOutlined },
+      { key: 'ai-researcher', label: 'AI研究员', href: routes.aiResearcher, icon: RobotOutlined },
+      { key: 'community', label: '赛博社区', href: routes.community, icon: CommentOutlined },
+      { key: 'news-analysis', label: '资讯分析', href: routes.newsAnalysis, icon: FileSearchOutlined },
       { key: 'trading', label: '策略交易', href: routes.trading, icon: LineChartOutlined },
       { key: 'tasks', label: '任务编排', href: routes.tasks, icon: CompassOutlined },
     ],
@@ -48,7 +53,6 @@ export const workstationNavGroups: NavGroup[] = [
     key: 'researcher',
     title: '研究员',
     items: [
-      { key: 'ai-researcher', label: 'AI研究员', href: routes.aiResearcher, icon: RobotOutlined },
       { key: 'my-researchers', label: '我的研究员', href: routes.labCreateResearcher, icon: UserAddOutlined },
       { key: 'talent-market', label: '人才市场', href: routes.labTalentMarket, icon: TeamOutlined },
       { key: 'skill-market', label: '技能市场', href: routes.labSkillMarket, icon: ShopOutlined },
@@ -60,9 +64,7 @@ export const workstationNavGroups: NavGroup[] = [
     title: '数据与文档',
     items: [
       { key: 'documents', label: '研报库', href: routes.documents, icon: FileTextOutlined },
-      { key: 'news-analysis', label: '资讯分析', href: routes.newsAnalysis, icon: FileSearchOutlined },
       { key: 'knowledge-base', label: '我的知识库', href: routes.labKnowledgeBase, icon: DatabaseOutlined },
-      { key: 'community', label: '社区', href: routes.community, icon: CommentOutlined },
     ],
   },
 ];

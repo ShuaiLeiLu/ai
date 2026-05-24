@@ -1,12 +1,7 @@
-import type { Metadata } from 'next';
+import { redirect } from 'next/navigation';
 
-import { CommunityPageClient } from '@/features/community/components/CommunityPageClient';
-
-export const metadata: Metadata = {
-  title: '极睿社区'
-};
+import { routes } from '@/lib/constants/routes';
 
 export default function CommunityPage() {
-  return <CommunityPageClient />;
+  redirect(routes.community);
 }
-

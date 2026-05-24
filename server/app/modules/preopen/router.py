@@ -1,11 +1,14 @@
 """
 盘前速览路由
 
-页面数据接口只读 Redis 快照；AKShare 由后台刷新任务定时写入快照。
+页面数据接口优先读取 Redis 快照；快照缺失时实时调用 AKShare 聚合兜底。
 """
 from __future__ import annotations
 
 import asyncio
+import logging
+from collections.abc import Callable
+from typing import TypeVar
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
@@ -13,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import db_session_dependency, get_optional_session
 from app.core.container import get_container
+from app.integrations.akshare.client import run_sync
 from app.modules.preopen.schemas import (
     AiDigest,
     AnomalyOverview,
@@ -30,18 +34,51 @@ from app.modules.preopen.skill_service import (
     stream_preopen_chain,
 )
 from app.modules.preopen import snapshots
-from app.modules.preopen.snapshot_cache import load_snapshot_or_empty
+from app.modules.preopen.snapshot_cache import SnapshotSpec, load_snapshot
 from app.schemas.common import ApiResponse, ListResponse
+
+logger = logging.getLogger(__name__)
+T = TypeVar("T")
 
 router = APIRouter(prefix="/preopen", tags=["preopen"])
 service = PreopenService()
+
+
+async def _load_snapshot_or_empty(redis: object, spec: SnapshotSpec[T]) -> T:
+    try:
+        data = await load_snapshot(redis, spec)
+        return data if data is not None else spec.empty_factory()
+    except Exception:
+        logger.info("[盘前速览] 快照不可用，使用实时数据兜底：%s", spec.name)
+        return spec.empty_factory()
+
+
+async def _load_list_or_live(redis: object, spec: SnapshotSpec[list[T]], fetch: Callable[[], list[T]]) -> list[T]:
+    items = await _load_snapshot_or_empty(redis, spec)
+    if items:
+        return items
+    return await run_sync(fetch)
+
+
+async def _load_anomalies_or_live(redis: object) -> AnomalyOverview:
+    data = await _load_snapshot_or_empty(redis, snapshots.ANOMALIES)
+    if data.tail_session_moves or data.severe_volatility:
+        return data
+    return await run_sync(service.get_anomalies)
+
+
+async def _load_trends_or_live(redis: object) -> TrendOverview:
+    data = await _load_snapshot_or_empty(redis, snapshots.TRENDS)
+    if data.series and any(series.points for series in data.series):
+        return data
+    return await run_sync(service.get_trends)
 
 
 @router.get("/all")
 async def preopen_all(
     session: AsyncSession | None = Depends(get_optional_session),
 ) -> ApiResponse[PreopenAllData]:
-    """聚合接口 —— 一次请求返回盘前速览全量快照数据。"""
+    """聚合接口 —— 一次请求返回盘前速览全量数据，快照缺失时实时采集。"""
     redis = get_container().redis.get_client()
     (
         hot_news_items,
@@ -53,14 +90,14 @@ async def preopen_all(
         rank_up_items,
         rank_down_items,
     ) = await asyncio.gather(
-        load_snapshot_or_empty(redis, snapshots.HOT_NEWS),
-        load_snapshot_or_empty(redis, snapshots.MARKET_INDICATORS),
-        load_snapshot_or_empty(redis, snapshots.ANOMALIES),
-        load_snapshot_or_empty(redis, snapshots.TRENDS),
-        load_snapshot_or_empty(redis, snapshots.LIMIT_UP_LADDER),
-        load_snapshot_or_empty(redis, snapshots.INDUSTRY_BOARDS),
-        load_snapshot_or_empty(redis, snapshots.STOCK_RANK_UP),
-        load_snapshot_or_empty(redis, snapshots.STOCK_RANK_DOWN),
+        _load_list_or_live(redis, snapshots.HOT_NEWS, service.list_hot_news),
+        _load_list_or_live(redis, snapshots.MARKET_INDICATORS, service.list_market_indicators),
+        _load_anomalies_or_live(redis),
+        _load_trends_or_live(redis),
+        _load_list_or_live(redis, snapshots.LIMIT_UP_LADDER, service.list_limit_up_ladder),
+        _load_list_or_live(redis, snapshots.INDUSTRY_BOARDS, service.list_industry_boards),
+        _load_list_or_live(redis, snapshots.STOCK_RANK_UP, lambda: service.list_stock_rank("up")),
+        _load_list_or_live(redis, snapshots.STOCK_RANK_DOWN, lambda: service.list_stock_rank("down")),
     )
     if session is not None:
         try:
@@ -85,14 +122,18 @@ async def preopen_all(
 @router.get("/hot-news")
 async def hot_news() -> ApiResponse[ListResponse[HotNewsItem]]:
     redis = get_container().redis.get_client()
-    items = await load_snapshot_or_empty(redis, snapshots.HOT_NEWS)
+    items = await _load_list_or_live(redis, snapshots.HOT_NEWS, service.list_hot_news)
     return ApiResponse(data=ListResponse(items=items, total=len(items)))
 
 
 @router.get("/ai-digest")
 async def ai_digest() -> ApiResponse[AiDigest]:
-    """盘前 AI 解读 —— 仅返回真实 LLM 分析结果。"""
-    data = await service.generate_ai_digest_with_llm()
+    """盘前 AI 解读 —— LLM 优先，未配置或失败时返回 AkShare 结构化研判。"""
+    try:
+        data = await service.generate_ai_digest_with_llm()
+    except Exception:
+        logger.warning("[盘前速览] LLM 解读不可用，回退到 AkShare 结构化研判", exc_info=True)
+        data = await run_sync(service.get_ai_digest)
     return ApiResponse(data=data)
 
 
@@ -136,14 +177,14 @@ async def ai_digest_v2(
 @router.get("/market-indicators")
 async def market_indicators() -> ApiResponse[ListResponse[MarketIndicator]]:
     redis = get_container().redis.get_client()
-    items = await load_snapshot_or_empty(redis, snapshots.MARKET_INDICATORS)
+    items = await _load_list_or_live(redis, snapshots.MARKET_INDICATORS, service.list_market_indicators)
     return ApiResponse(data=ListResponse(items=items, total=len(items)))
 
 
 @router.get("/anomalies")
 async def anomalies() -> ApiResponse[AnomalyOverview]:
     redis = get_container().redis.get_client()
-    data = await load_snapshot_or_empty(redis, snapshots.ANOMALIES)
+    data = await _load_anomalies_or_live(redis)
     return ApiResponse(data=data)
 
 
@@ -159,21 +200,21 @@ async def trends(
         except Exception:
             await session.rollback()
     redis = get_container().redis.get_client()
-    data = await load_snapshot_or_empty(redis, snapshots.TRENDS)
+    data = await _load_trends_or_live(redis)
     return ApiResponse(data=data)
 
 
 @router.get("/limit-up-ladder")
 async def limit_up_ladder() -> ApiResponse[ListResponse[LimitUpLadderItem]]:
     redis = get_container().redis.get_client()
-    items = await load_snapshot_or_empty(redis, snapshots.LIMIT_UP_LADDER)
+    items = await _load_list_or_live(redis, snapshots.LIMIT_UP_LADDER, service.list_limit_up_ladder)
     return ApiResponse(data=ListResponse(items=items, total=len(items)))
 
 
 @router.get("/industry-boards")
 async def industry_boards() -> ApiResponse[ListResponse[IndustryBoardItem]]:
     redis = get_container().redis.get_client()
-    items = await load_snapshot_or_empty(redis, snapshots.INDUSTRY_BOARDS)
+    items = await _load_list_or_live(redis, snapshots.INDUSTRY_BOARDS, service.list_industry_boards)
     return ApiResponse(data=ListResponse(items=items, total=len(items)))
 
 
@@ -181,5 +222,5 @@ async def industry_boards() -> ApiResponse[ListResponse[IndustryBoardItem]]:
 async def stock_rank(direction: str = "up") -> ApiResponse[ListResponse[StockRankItem]]:
     redis = get_container().redis.get_client()
     spec = snapshots.STOCK_RANK_DOWN if direction == "down" else snapshots.STOCK_RANK_UP
-    items = await load_snapshot_or_empty(redis, spec)
+    items = await _load_list_or_live(redis, spec, lambda: service.list_stock_rank(direction))
     return ApiResponse(data=ListResponse(items=items, total=len(items)))

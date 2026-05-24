@@ -10,6 +10,7 @@
  */
 'use client';
 
+import { useState } from 'react';
 import { Skeleton } from 'antd';
 
 import { PageCard } from '@/components/ui/page-card';
@@ -56,6 +57,9 @@ function AnomalyRow({ item, idx }: { item: AnomalyItem; idx: number }) {
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="truncate text-[13px] font-semibold text-ink-800">{item.name}</span>
+          {item.is_new && (
+            <span className="rounded bg-up-50 px-1 py-px text-[10px] font-bold text-up-600">NEW</span>
+          )}
           <span
             className={`shrink-0 text-[12px] font-semibold tabular-nums ${
               isUp ? 'text-up-600' : 'text-down-600'
@@ -74,7 +78,11 @@ function AnomalyRow({ item, idx }: { item: AnomalyItem; idx: number }) {
               {tagLabel[t] || t}
             </span>
           ))}
-          <span className="truncate">{item.note || `${item.symbol} · 换手 ${item.turnover_ratio.toFixed(1)}%`}</span>
+          <span className="truncate">
+            {item.risk_type ? `${item.risk_type} · ` : ''}
+            {item.note || `${item.symbol} · 换手 ${item.turnover_ratio.toFixed(1)}%`}
+            {item.risk_window ? ` · ${item.risk_window}` : ''}
+          </span>
         </div>
       </div>
       <span className="shrink-0 self-start text-[10.5px] text-ink-200 tabular-nums">{relTime(idx)}</span>
@@ -83,14 +91,17 @@ function AnomalyRow({ item, idx }: { item: AnomalyItem; idx: number }) {
 }
 
 export function AnomaliesCard() {
+  const [tab, setTab] = useState<'monitor' | 'risk'>('monitor');
   const { data, isLoading, error } = useAnomaliesQuery();
   const overview: AnomalyOverview | undefined = data ?? undefined;
 
-  // 合并尾盘异动 + 严重异常，按绝对涨跌幅排序
-  const merged = ([
-    ...(overview?.tail_session_moves ?? []),
-    ...(overview?.severe_volatility ?? []),
-  ] as AnomalyItem[]).sort((a, b) => Math.abs(b.change_pct) - Math.abs(a.change_pct));
+  const monitorItems = [...(overview?.tail_session_moves ?? [])].sort(
+    (a, b) => Math.abs(b.change_pct) - Math.abs(a.change_pct),
+  );
+  const riskItems = [...(overview?.severe_volatility ?? [])].sort(
+    (a, b) => Math.abs(b.change_pct) - Math.abs(a.change_pct),
+  );
+  const visibleItems = tab === 'monitor' ? monitorItems : riskItems;
 
   return (
     <StateWrapper
@@ -100,17 +111,48 @@ export function AnomaliesCard() {
       title="研究员异动提示"
       nonTradingDayMessage={overview && !overview.calendar.is_trading_day ? overview.calendar.notice : undefined}
     >
-      <PageCard title="研究员异动提示" accent="gold" extra={<span className="cursor-pointer">全部</span>} density="compact">
+      <PageCard
+        title="异动监控与风险提示"
+        accent="gold"
+        extra={
+          <div className="inline-flex rounded-lg bg-ink-25 p-0.5 text-[11px]">
+            {[
+              { key: 'monitor' as const, label: `异动监控 ${monitorItems.length}` },
+              { key: 'risk' as const, label: `风险提示 ${riskItems.length}` },
+            ].map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => setTab(item.key)}
+                className={[
+                  'rounded-md px-2 py-1 font-semibold transition-colors',
+                  tab === item.key ? 'bg-white text-gold-700 shadow-sm' : 'text-ink-400 hover:text-ink-700',
+                ].join(' ')}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        }
+        density="compact"
+      >
+        <div className="mb-2 rounded-lg bg-gold-50 px-3 py-2 text-[11.5px] leading-relaxed text-gold-700">
+          {tab === 'monitor'
+            ? '监控尾盘拉升、炸板、高换手等异动，用于观察资金短线攻击方向。'
+            : '提示连续异常波动、跌停扩散与交易所监管风险，新入风险项会标记 NEW。'}
+        </div>
         {isLoading ? (
           <Skeleton active paragraph={{ rows: 5 }} />
-        ) : merged.length ? (
+        ) : visibleItems.length ? (
           <div className="flex flex-col gap-0.5">
-            {merged.slice(0, 6).map((item, i) => (
+            {visibleItems.slice(0, 6).map((item, i) => (
               <AnomalyRow key={`${item.symbol}-${i}`} item={item} idx={i} />
             ))}
           </div>
         ) : (
-          <div className="py-6 text-center text-[12px] text-ink-400">暂无异动信号</div>
+          <div className="py-6 text-center text-[12px] text-ink-400">
+            {tab === 'monitor' ? '暂无异常波动股票' : '暂无风险提示股票'}
+          </div>
         )}
       </PageCard>
     </StateWrapper>

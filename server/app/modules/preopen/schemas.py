@@ -14,6 +14,13 @@ IndicatorKey = Literal[
     "turnover_growth",
     "nasdaq",
     "ftse_a50",
+    # 主要指数（前缀 index_，code 来自新浪 / akshare）
+    "index_sh000001",  # 上证指数
+    "index_sz399001",  # 深证成指
+    "index_sz399006",  # 创业板指
+    "index_sh000300",  # 沪深300
+    "index_sh000688",  # 科创50
+    "index_hstech",    # 恒生科技
 ]
 IndicatorDirection = Literal["up", "down", "flat"]
 RiskTag = Literal["consecutive_limit_up", "abnormal_volatility", "st_risk", "high_turnover"]
@@ -48,17 +55,26 @@ class HotNewsItem(SchemaModel):
 
 class AiDigest(SchemaModel):
     digest_id: str
+    report_title: str | None = None
     headline: str
     interval_start: datetime
     interval_end: datetime
     generated_at: datetime
     sentiment: NewsSentiment
     key_points: list[str]
+    report_sections: list["AiDigestSection"] = []
     news_drivers: list[str] = []
     opportunity_sectors: list[str] = []
     risk_sectors: list[str] = []
     intraday_watch: list[str] = []
     simulation_plan: list[str] = []
+
+
+class AiDigestSection(SchemaModel):
+    title: str
+    paragraphs: list[str] = []
+    bullets: list[str] = []
+    table: list[dict[str, str]] = []
 
 
 class MarketIndicator(SchemaModel):
@@ -78,6 +94,9 @@ class AnomalyItem(SchemaModel):
     turnover_ratio: float
     risk_tags: list[RiskTag]
     note: str
+    risk_type: str | None = None
+    risk_window: str | None = None
+    is_new: bool = False
 
 
 class AnomalyOverview(SchemaModel):

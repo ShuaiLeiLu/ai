@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as api from '../api';
 
 const featureKey = 'researcher-market';
+const workbenchFeatureKey = 'researcher-workbench';
 
 export const useMarketResearchers = (params?: api.MarketQueryParams) => {
   return useQuery({
@@ -38,6 +39,7 @@ function useMarketMutation<TArgs>(mutationFn: (args: TArgs) => Promise<void>) {
     mutationFn,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [featureKey] });
+      queryClient.invalidateQueries({ queryKey: [workbenchFeatureKey] });
     }
   });
 }

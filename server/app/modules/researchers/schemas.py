@@ -95,6 +95,7 @@ class WorkbenchHotDocument(SchemaModel):
     view_count: int | None = None
     comment_count: int | None = None
     metrics_ready: bool = False
+    is_vip_only: bool = False
 
 
 class WorkbenchPublicRankItem(SchemaModel):

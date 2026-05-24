@@ -7,6 +7,8 @@ import { NewsFeedItem } from '@/types/news-analysis';
 
 interface NewsItemProps {
   item: NewsFeedItem;
+  onAnalyze?: (item: NewsFeedItem) => void;
+  onSelectStock?: (stock: NewsFeedItem['stock_relations'][number]) => void;
 }
 
 function formatTime(value: string): string {
@@ -19,7 +21,7 @@ function formatTime(value: string): string {
   return `${month}-${day} ${hour}:${minute}`;
 }
 
-export function NewsItem({ item }: NewsItemProps) {
+export function NewsItem({ item, onAnalyze, onSelectStock }: NewsItemProps) {
   return (
     <div className="border-b border-slate-100 p-4 transition-colors hover:bg-slate-50">
       <div className="mb-2 flex items-start gap-2">
@@ -30,7 +32,7 @@ export function NewsItem({ item }: NewsItemProps) {
             {item.source} · {formatTime(item.publish_time)} · {item.category}
           </div>
         </div>
-        <Button size="small">AI 解读</Button>
+        <Button size="small" onClick={() => onAnalyze?.(item)}>AI 解读</Button>
       </div>
 
       <Typography.Paragraph className="!mb-2 !text-sm !text-slate-600">
@@ -39,7 +41,12 @@ export function NewsItem({ item }: NewsItemProps) {
 
       <div className="flex flex-wrap gap-2">
         {item.stock_relations.map((stock) => (
-          <Tag key={`${item.news_id}-${stock.stock_code}`} color="blue">
+          <Tag
+            key={`${item.news_id}-${stock.stock_code}`}
+            color="blue"
+            className="cursor-pointer"
+            onClick={() => onSelectStock?.(stock)}
+          >
             {stock.stock_name} {stock.stock_code}
           </Tag>
         ))}

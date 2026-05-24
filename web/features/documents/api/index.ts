@@ -1,6 +1,6 @@
 import { http } from '@/lib/request/http-client';
 import { ApiResponse, ListResponse } from '@/types/api';
-import { DocumentDetail, DocumentSummary, DocumentType } from '@/types/documents';
+import { DocumentComment, DocumentDetail, DocumentSummary, DocumentType } from '@/types/documents';
 
 const API_BASE = '/documents';
 
@@ -26,3 +26,19 @@ export const getDocumentDetail = async (documentId: string): Promise<DocumentDet
   return response.data;
 };
 
+export const listDocumentComments = async (documentId: string): Promise<DocumentComment[]> => {
+  const response = await http<ApiResponse<ListResponse<DocumentComment>>>(`${API_BASE}/${documentId}/comments`);
+  return response.data.items;
+};
+
+export const createDocumentComment = async (
+  documentId: string,
+  content: string,
+  replyToId?: string | null,
+): Promise<DocumentComment> => {
+  const response = await http<ApiResponse<DocumentComment>>(`${API_BASE}/${documentId}/comments`, {
+    method: 'POST',
+    body: JSON.stringify({ content, reply_to_id: replyToId ?? null }),
+  });
+  return response.data;
+};

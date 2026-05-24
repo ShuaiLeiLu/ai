@@ -5,7 +5,7 @@ import type { Route } from 'next';
 import { usePathname } from 'next/navigation';
 import {
   DashboardOutlined,
-  LineChartOutlined,
+  FireOutlined,
   RobotOutlined,
   TeamOutlined,
   UserOutlined,
@@ -44,10 +44,10 @@ export function WorkstationTabBar({ onOpenAi }: TabBarProps) {
     },
     {
       key: 'trading',
-      label: '交易',
-      href: routes.trading,
-      icon: <LineChartOutlined style={{ fontSize: 19 }} />,
-      match: (p) => p.startsWith(routes.trading),
+      label: '题材',
+      href: routes.eventDriven,
+      icon: <FireOutlined style={{ fontSize: 19 }} />,
+      match: (p) => p.startsWith(routes.eventDriven),
     },
     { key: 'ai', label: 'AI', icon: <RobotOutlined style={{ fontSize: 22 }} />, center: true, onTap: onOpenAi },
     {

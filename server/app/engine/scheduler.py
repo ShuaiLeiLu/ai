@@ -687,6 +687,7 @@ def start_scheduler(db: DatabaseFactory, redis: RedisFactory | None = None) -> A
                 trigger="date",
                 run_date=_now_shanghai() + timedelta(seconds=15 + index * 5),
                 args=[redis, group.name],
+                kwargs={"force": True},  # 启动时强制刷新一次，忽略交易时段限制
                 id=f"initial_preopen_snapshot_{group.name}",
                 name=f"启动后首次刷新盘前快照：{group.name}",
                 replace_existing=True,

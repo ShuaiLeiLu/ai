@@ -33,6 +33,7 @@ import {
   useTradingRecordsWhenEnabled,
   useTradingStatsWhenEnabled,
 } from '@/features/trading/hooks';
+import { useHiredResearchers } from '@/features/researcher-workbench/hooks';
 import { routes } from '@/lib/constants/routes';
 import type { PositionItem, TradeLogItem, TradeRecord, TradingStats } from '@/types/trading';
 
@@ -715,6 +716,7 @@ export function TradingDetailClient({ researcherId }: { researcherId: string }) 
   const [sideTab, setSideTab] = useState<'current' | 'history'>('current'); // 侧边栏 tab
   const [activeSymbol, setActiveSymbol] = useState<string | null>(null); // 选中的持仓
 
+  const researchersQuery = useHiredResearchers(Boolean(researcherId));
   const accountQuery = useTradingAccountWhenEnabled(researcherId);
   const positionsQuery = useTradingPositionsWhenEnabled(researcherId);
   const recordsEnabled = mainTab === 'history' || sideTab === 'history';
@@ -729,6 +731,16 @@ export function TradingDetailClient({ researcherId }: { researcherId: string }) 
   const records = recordsQuery.data ?? [];
   const logs = logsQuery.data ?? [];
   const stats = statsQuery.data ?? null;
+  const researcher = useMemo(
+    () => researchersQuery.data?.find((item) => item.researcher_id === researcherId),
+    [researcherId, researchersQuery.data],
+  );
+  const visibleRecords = useMemo(() => {
+    if (mainTab !== 'history') return records;
+    const cutoff = dayjs().subtract(3, 'day');
+    return records.filter((record) => dayjs(record.created_at).isAfter(cutoff));
+  }, [mainTab, records]);
+  const hiddenRecordCount = mainTab === 'history' ? records.length - visibleRecords.length : 0;
 
   /** 初始资金（以后端返回为准，缺失时兜底 100 万） */
   const INITIAL = acct?.initial_capital ?? stats?.initial_capital ?? 1_000_000;
@@ -742,7 +754,7 @@ export function TradingDetailClient({ researcherId }: { researcherId: string }) 
     <div className="min-h-screen bg-slate-50">
       {/* 顶部导航栏 */}
       <div className="bg-white border-b border-slate-200 px-4 sm:px-6 py-3">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <Link
             href={routes.aiResearcher as any}
             className="flex items-center gap-1 text-sm text-slate-500 hover:text-violet-600 transition-colors"
@@ -750,7 +762,17 @@ export function TradingDetailClient({ researcherId }: { researcherId: string }) 
             <LeftOutlined className="text-xs" />
             <span>模拟交易详情</span>
           </Link>
-          <span className="text-xs text-slate-400">实时连接已关闭</span>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="rounded-full bg-violet-50 px-2.5 py-1 font-medium text-violet-600">
+              {researcher?.name ?? 'AI研究员模拟盘'}
+            </span>
+            {researcher?.level && (
+              <span className="rounded-full bg-amber-50 px-2.5 py-1 font-medium text-amber-600">
+                {researcher.level}
+              </span>
+            )}
+            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-500">实时连接已关闭</span>
+          </div>
         </div>
       </div>
 
@@ -760,6 +782,9 @@ export function TradingDetailClient({ researcherId }: { researcherId: string }) 
         <div className="flex flex-col lg:flex-row">
           {/* ── 左侧面板 ── */}
           <div className="w-full lg:w-64 shrink-0 bg-white border-r border-slate-100">
+            <div className="border-b border-amber-100 bg-amber-50 px-4 py-3 text-xs leading-relaxed text-amber-700">
+              模拟交易仅用于观察 AI 策略效果，不构成任何投资建议。非 VIP 用户看到的数据可能延迟，三天前交易明细需 VIP 权限。
+            </div>
             {/* 账户概览 */}
             <div className="p-4 border-b border-slate-100">
               <div className="text-2xl font-bold text-slate-800">{fmtWan(acct?.total_asset ?? 0)}</div>
@@ -829,7 +854,14 @@ export function TradingDetailClient({ researcherId }: { researcherId: string }) 
             <div className="p-4 sm:p-6">
               {mainTab === 'log' && <TradeLogTab logs={logs} />}
               {mainTab === 'history' && (
-                <HistoryTab stats={stats} records={records} />
+                <>
+                  <div className="mb-4 rounded-lg border border-violet-100 bg-violet-50 px-4 py-3 text-xs leading-relaxed text-violet-700">
+                    当前展示最近三天交易明细与完整统计概览。更早成交明细已隐藏
+                    {hiddenRecordCount > 0 ? ` ${hiddenRecordCount} 条` : ''}
+                    ，开通 VIP 后可查看完整历史、实时执行记录与接收权限。
+                  </div>
+                  <HistoryTab stats={stats} records={visibleRecords} />
+                </>
               )}
             </div>
           </div>

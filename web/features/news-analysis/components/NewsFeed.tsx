@@ -4,13 +4,16 @@ import { Alert, Empty, Skeleton } from 'antd';
 
 import { useNewsFeed } from '@/features/news-analysis/hooks';
 import { GetNewsFeedParams } from '@/types/news-analysis';
+import type { NewsFeedItem } from '@/types/news-analysis';
 import { NewsItem } from './NewsItem';
 
 interface NewsFeedProps {
   filters: GetNewsFeedParams;
+  onAnalyzeNews?: (item: NewsFeedItem) => void;
+  onSelectStock?: (stock: NewsFeedItem['stock_relations'][number]) => void;
 }
 
-export function NewsFeed({ filters }: NewsFeedProps) {
+export function NewsFeed({ filters, onAnalyzeNews, onSelectStock }: NewsFeedProps) {
   const { data: feed, isLoading, isError, error } = useNewsFeed(filters);
 
   if (isLoading) {
@@ -62,7 +65,12 @@ export function NewsFeed({ filters }: NewsFeedProps) {
   return (
     <div className="h-full overflow-y-auto">
       {feed.map((item) => (
-        <NewsItem key={item.news_id} item={item} />
+        <NewsItem
+          key={item.news_id}
+          item={item}
+          onAnalyze={onAnalyzeNews}
+          onSelectStock={onSelectStock}
+        />
       ))}
     </div>
   );

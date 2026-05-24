@@ -52,12 +52,11 @@ export const useTradingPortfolio = (researcherId?: string, enabled: boolean = tr
 
 // ──────────── 子数据消费 hooks（从缓存读取） ────────────
 
-/** 查询模拟账户概况 */
+/** 查询模拟账户概况。未传 researcherId 时由后端默认取用户首个研究员 */
 export const useTradingAccount = (researcherId?: string) =>
   useQuery({
     queryKey: [featureKey, 'account', researcherId ?? 'default'],
     queryFn: () => api.getTradingAccount(researcherId),
-    enabled: Boolean(researcherId),
     staleTime: 15_000,
     refetchOnWindowFocus: false,
   });
@@ -71,12 +70,11 @@ export const useTradingAccountWhenEnabled = (researcherId?: string, enabled: boo
     refetchOnWindowFocus: false,
   });
 
-/** 查询持仓列表 */
+/** 查询持仓列表。未传 researcherId 时由后端默认取用户首个研究员 */
 export const useTradingPositions = (researcherId?: string) =>
   useQuery({
     queryKey: [featureKey, 'positions', researcherId ?? 'default'],
     queryFn: () => api.getTradingPositions(researcherId),
-    enabled: Boolean(researcherId),
     staleTime: 15_000,
     refetchOnWindowFocus: false,
   });
@@ -90,12 +88,11 @@ export const useTradingPositionsWhenEnabled = (researcherId?: string, enabled: b
     refetchOnWindowFocus: false,
   });
 
-/** 查询成交记录 */
+/** 查询成交记录。未传 researcherId 时由后端默认取用户首个研究员 */
 export const useTradingRecords = (researcherId?: string) =>
   useQuery({
     queryKey: [featureKey, 'records', researcherId ?? 'default'],
     queryFn: () => api.getTradingRecords(researcherId),
-    enabled: Boolean(researcherId),
     staleTime: 30_000,
     refetchOnWindowFocus: false,
   });

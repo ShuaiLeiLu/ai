@@ -110,6 +110,25 @@ RESEARCHERS = [
             "15:10 输出每日持仓明细报告",
         ],
         "hire_count": 67,
+        # 演示持仓（小市值股票，5 只）
+        "demo_positions": [
+            {"symbol": "300223", "name": "北京君正",   "quantity": 500,  "cost_price": 85.20,  "current_price": 92.36},
+            {"symbol": "002138", "name": "顺络电子",   "quantity": 800,  "cost_price": 24.50,  "current_price": 26.18},
+            {"symbol": "300316", "name": "晶盛机电",   "quantity": 600,  "cost_price": 42.30,  "current_price": 41.85},
+            {"symbol": "300433", "name": "蓝思科技",   "quantity": 1500, "cost_price": 18.90,  "current_price": 20.42},
+            {"symbol": "002384", "name": "东山精密",   "quantity": 1000, "cost_price": 32.80,  "current_price": 35.21},
+        ],
+        # 演示成交记录（近 7 个交易日）
+        "demo_trades": [
+            {"symbol": "300223", "name": "北京君正", "side": "buy",  "quantity": 500,  "price": 85.20},
+            {"symbol": "002138", "name": "顺络电子", "side": "buy",  "quantity": 800,  "price": 24.50},
+            {"symbol": "300316", "name": "晶盛机电", "side": "buy",  "quantity": 600,  "price": 42.30},
+            {"symbol": "300433", "name": "蓝思科技", "side": "buy",  "quantity": 1500, "price": 18.90},
+            {"symbol": "002384", "name": "东山精密", "side": "buy",  "quantity": 1000, "price": 32.80},
+            {"symbol": "600519", "name": "贵州茅台", "side": "sell", "quantity": 100,  "price": 1820.00},
+            {"symbol": "000001", "name": "平安银行", "side": "sell", "quantity": 2000, "price": 13.45},
+            {"symbol": "300750", "name": "宁德时代", "side": "buy",  "quantity": 200,  "price": 215.60},
+        ],
         "strategy_config": {
             "strategy_type": "smallcap_rotation",
             "description": "A股小市值三因子轮动策略（基于聚宽实盘验证）",
@@ -256,6 +275,25 @@ RESEARCHERS = [
             "15:05 输出情绪周期、持仓和风控复盘",
         ],
         "hire_count": 42,
+        # 演示持仓（短线热点股，5 只）
+        "demo_positions": [
+            {"symbol": "688256", "name": "寒武纪-U", "quantity": 200,  "cost_price": 245.00, "current_price": 288.66},
+            {"symbol": "688012", "name": "中微公司", "quantity": 300,  "cost_price": 182.50, "current_price": 198.42},
+            {"symbol": "300059", "name": "东方财富", "quantity": 2000, "cost_price": 14.20,  "current_price": 15.86},
+            {"symbol": "600519", "name": "贵州茅台", "quantity": 50,   "cost_price": 1780.0, "current_price": 1825.50},
+            {"symbol": "002594", "name": "比亚迪",   "quantity": 400,  "cost_price": 238.00, "current_price": 250.93},
+        ],
+        # 演示成交记录（近 7 个交易日）
+        "demo_trades": [
+            {"symbol": "688256", "name": "寒武纪-U", "side": "buy",  "quantity": 200,  "price": 245.00},
+            {"symbol": "688012", "name": "中微公司", "side": "buy",  "quantity": 300,  "price": 182.50},
+            {"symbol": "300059", "name": "东方财富", "side": "buy",  "quantity": 2000, "price": 14.20},
+            {"symbol": "002594", "name": "比亚迪",   "side": "buy",  "quantity": 400,  "price": 238.00},
+            {"symbol": "600519", "name": "贵州茅台", "side": "buy",  "quantity": 50,   "price": 1780.0},
+            {"symbol": "300750", "name": "宁德时代", "side": "sell", "quantity": 300,  "price": 218.40},
+            {"symbol": "601318", "name": "中国平安", "side": "sell", "quantity": 1000, "price": 52.80},
+            {"symbol": "300760", "name": "迈瑞医疗", "side": "buy",  "quantity": 150,  "price": 295.00},
+        ],
         "strategy_config": {
             "strategy_type": "sentiment_ultrashort",
             "description": "A股情绪超短高低切/破局龙头策略 v1.0",
@@ -501,8 +539,9 @@ async def seed(session: AsyncSession) -> None:
         session.add(hire)
 
         # 模拟交易账户（每个研究员独立，初始 100 万）
+        acct_id = _id("acct_")
         acct = TradingAccount(
-            id=_id("acct_"),
+            id=acct_id,
             user_id=user_id,
             researcher_id=rid,
             total_asset=INITIAL_CASH,
@@ -512,7 +551,53 @@ async def seed(session: AsyncSession) -> None:
         )
         session.add(acct)
 
-        print(f"  ✓ 研究员: {cfg['name']} ({rid}) + 模拟盘 {INITIAL_CASH:.0f}元")
+        # ── 演示持仓 + 交易记录（让前端有真实可视化数据）──
+        from app.models.trading import Position, TradeRecord
+        demo_positions = cfg.get("demo_positions", [])
+        demo_trades = cfg.get("demo_trades", [])
+
+        # 持仓
+        holding_value = 0.0
+        for pos in demo_positions:
+            pnl = (pos["current_price"] - pos["cost_price"]) * pos["quantity"]
+            session.add(Position(
+                id=_id("pos_"),
+                account_id=acct_id,
+                symbol=pos["symbol"],
+                name=pos["name"],
+                quantity=pos["quantity"],
+                cost_price=pos["cost_price"],
+                current_price=pos["current_price"],
+                pnl=pnl,
+            ))
+            holding_value += pos["current_price"] * pos["quantity"]
+
+        # 交易记录（按时间倒序，最近 7 天）
+        used_cash = sum(p["cost_price"] * p["quantity"] for p in demo_positions)
+        for idx, tr in enumerate(demo_trades):
+            session.add(TradeRecord(
+                id=_id("tr_"),
+                account_id=acct_id,
+                symbol=tr["symbol"],
+                name=tr["name"],
+                side=tr["side"],
+                quantity=tr["quantity"],
+                price=tr["price"],
+                commission=round(tr["price"] * tr["quantity"] * 0.00025, 2),
+                created_at=_now(offset_hours=-24 * idx),
+            ))
+
+        # 更新账户聚合
+        acct.holding_value = round(holding_value, 2)
+        acct.available_cash = round(INITIAL_CASH - used_cash, 2)
+        acct.total_asset = round(acct.available_cash + acct.holding_value, 2)
+        # 今日盈亏 = 当前持仓盈亏（演示数据）
+        acct.daily_pnl = round(sum(
+            (p["current_price"] - p["cost_price"]) * p["quantity"]
+            for p in demo_positions
+        ), 2)
+
+        print(f"  ✓ 研究员: {cfg['name']} ({rid}) · 模拟盘 资产 {acct.total_asset:.0f} 元 · 持仓 {len(demo_positions)} · 成交 {len(demo_trades)}")
 
     await session.flush()
 
@@ -580,17 +665,34 @@ async def main():
     engine = create_async_engine(settings.database_url)
     session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
-    # 先清空旧种子数据（幂等）
+    # 先清空旧种子数据（幂等）—— 用 TRUNCATE ... CASCADE 解决 FK 依赖
     async with session_factory() as session:
-        for table in [
-            "trade_logs", "trade_records", "positions", "trading_accounts",
+        tables = [
+            "trade_logs", "trade_records", "positions",
+            "trading_account_snapshots", "trading_accounts",
+            "pending_orders",
+            "researcher_thesis_logs", "skill_run_logs", "daily_review_reports",
+            "preopen_ai_digests",
+            "minute_snapshots",
             "comments", "posts", "documents",
             "researcher_hires", "researchers",
             "battery_ledger", "membership_orders",
             "mcp_authorizations",
             "users",
-        ]:
-            await session.execute(text(f"DELETE FROM {table}"))
+        ]
+        # 用 TRUNCATE CASCADE 一次性清干净所有依赖表（如果存在）
+        existing = await session.execute(
+            text(
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = 'public' AND table_name = ANY(:tables)"
+            ),
+            {"tables": tables},
+        )
+        existing_tables = [row[0] for row in existing.fetchall()]
+        if existing_tables:
+            await session.execute(
+                text(f"TRUNCATE TABLE {', '.join(existing_tables)} RESTART IDENTITY CASCADE")
+            )
         await session.commit()
         print("✓ 已清空旧数据\n")
 

@@ -293,6 +293,7 @@ export function DocumentsCenterPageClient() {
                       <Badge tone={meta.tone}>{meta.label}</Badge>
                       {rating && <Badge tone="up">{rating}</Badge>}
                       {item.symbol && <Badge tone="ink">{item.symbol}</Badge>}
+                      {item.is_vip_only && <Badge tone="gold">VIP专属</Badge>}
                       <span className="ml-1 text-[11.5px] text-ink-400">
                         {item.researcher_name} · {dayjs(item.created_at).format('MM-DD HH:mm')}
                       </span>
@@ -313,6 +314,7 @@ export function DocumentsCenterPageClient() {
                       <span>📄 32 页</span>
                       <span className="tnum">👁 {item.view_count}</span>
                       <span className="tnum">⭐ {item.like_count}</span>
+                      {item.is_vip_only && <span className="text-gold-600">🔒 VIP完整查看</span>}
                       <span className="text-brand-600">🧠 AI 已分析</span>
                     </div>
                   </div>
@@ -338,6 +340,11 @@ export function DocumentsCenterPageClient() {
               <h3 className="serif text-[16px] font-bold leading-snug text-ink-900">
                 {activeDoc.title}
               </h3>
+              {activeDoc.is_vip_only && (
+                <div className="rounded-lg border border-gold-100 bg-gold-50 px-3 py-2 text-[12px] font-semibold text-gold-700">
+                  🔒 此内容需要VIP才能观看，开通后可查看完整正文、交易计划与风险清单。
+                </div>
+              )}
 
               {/* 元信息 */}
               <div className="text-[11.5px] text-ink-400">
@@ -419,7 +426,10 @@ export function DocumentsCenterPageClient() {
                     >
                       {i + 1}
                     </span>
-                    <span className="line-clamp-2 text-ink-700">{item.title}</span>
+                    <span className="line-clamp-2 text-ink-700">
+                      {item.title}
+                      {item.is_vip_only && <span className="ml-1 text-gold-600">VIP</span>}
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -455,12 +465,31 @@ export function DocumentsCenterPageClient() {
               {detailQuery.data.tags.map((tag) => (
                 <Tag key={tag}>{tag}</Tag>
               ))}
+              {detailQuery.data.is_vip_only && <Tag color="gold">VIP专属</Tag>}
             </Space>
-            <div className="rounded border border-ink-50 bg-ink-25/50 p-4">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {detailQuery.data.content_markdown}
-              </ReactMarkdown>
-            </div>
+            {!detailQuery.data.can_view_full ? (
+              <div className="rounded border border-gold-100 bg-gold-50 p-5 text-center">
+                <div className="text-[30px]">🔒</div>
+                <div className="mt-2 serif text-[18px] font-bold text-ink-900">
+                  此内容需要VIP才能观看
+                </div>
+                <p className="mx-auto mt-2 max-w-md text-[13px] leading-relaxed text-ink-600">
+                  {detailQuery.data.vip_message ?? '开通后可查看完整研报正文、交易计划与风险清单。'}
+                </p>
+                <a
+                  href="/workstation/billing"
+                  className="mt-4 inline-flex rounded-lg bg-gold-500 px-4 py-2 text-[13px] font-semibold text-white hover:bg-gold-600"
+                >
+                  开通VIP
+                </a>
+              </div>
+            ) : (
+              <div className="rounded border border-ink-50 bg-ink-25/50 p-4">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {detailQuery.data.content_markdown}
+                </ReactMarkdown>
+              </div>
+            )}
           </div>
         ) : null}
       </Drawer>

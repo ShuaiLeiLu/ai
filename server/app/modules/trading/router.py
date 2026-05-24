@@ -40,6 +40,35 @@ router = APIRouter(prefix="/trading", tags=["trading"])
 service = TradingService()
 
 
+async def _resolve_researcher_id(
+    session: AsyncSession, user_id: str, researcher_id: str
+) -> str:
+    """若未指定 researcher_id，自动选取用户名下第一个研究员（雇佣或自创）。"""
+    if researcher_id:
+        return researcher_id
+    from sqlalchemy import select
+
+    from app.models.researcher import Researcher, ResearcherHire
+
+    # 1) 自创研究员（Researcher.id 即 researcher_id）
+    own = await session.execute(
+        select(Researcher.id)
+        .where(Researcher.owner_id == user_id)
+        .limit(1)
+    )
+    own_id = own.scalar_one_or_none()
+    if own_id:
+        return own_id
+    # 2) 雇佣的研究员
+    hired = await session.execute(
+        select(ResearcherHire.researcher_id)
+        .where(ResearcherHire.user_id == user_id)
+        .limit(1)
+    )
+    hired_id = hired.scalar_one_or_none()
+    return hired_id or ""
+
+
 def _empty_account() -> TradingAccount:
     return TradingAccount(
         account_id="",
@@ -116,12 +145,15 @@ async def trading_portfolio(
 
 @router.get("/account")
 async def account(
-    researcher_id: str = Query(default="", description="研究员ID，传入后查该研究员的模拟盘"),
+    researcher_id: str = Query(default="", description="研究员ID，传入后查该研究员的模拟盘；未传则用户首个研究员"),
     user_id: str = Depends(get_current_user_id),
     session: AsyncSession | None = Depends(get_optional_session),
 ) -> ApiResponse[TradingAccount]:
     """模拟账户概况。"""
-    if not session or not researcher_id:
+    if not session:
+        return ApiResponse(data=_empty_account())
+    researcher_id = await _resolve_researcher_id(session, user_id, researcher_id)
+    if not researcher_id:
         return ApiResponse(data=_empty_account())
     data = await service.async_get_account(session, user_id, researcher_id)
     return ApiResponse(data=data)
@@ -134,7 +166,10 @@ async def positions(
     session: AsyncSession | None = Depends(get_optional_session),
 ) -> ApiResponse[ListResponse[PositionItem]]:
     """持仓列表。"""
-    if not session or not researcher_id:
+    if not session:
+        return ApiResponse(data=ListResponse(items=[], total=0))
+    researcher_id = await _resolve_researcher_id(session, user_id, researcher_id)
+    if not researcher_id:
         return ApiResponse(data=ListResponse(items=[], total=0))
     account_id = await service.async_resolve_account_id(session, user_id, researcher_id)
     items = await service.async_list_positions(session, account_id)
@@ -149,7 +184,10 @@ async def records(
     session: AsyncSession | None = Depends(get_optional_session),
 ) -> ApiResponse[ListResponse[TradeRecord]]:
     """成交记录。"""
-    if not session or not researcher_id:
+    if not session:
+        return ApiResponse(data=ListResponse(items=[], total=0))
+    researcher_id = await _resolve_researcher_id(session, user_id, researcher_id)
+    if not researcher_id:
         return ApiResponse(data=ListResponse(items=[], total=0))
     account_id = await service.async_resolve_account_id(session, user_id, researcher_id)
     items = await service.async_list_records(session, account_id, limit=limit)

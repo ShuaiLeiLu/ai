@@ -4,10 +4,11 @@ export const routes = {
   workstation: '/workstation',
   // 核心模块
   aiResearcher: '/workstation/ai-researcher',
+  eventDriven: '/workstation/event-driven',
   researcherMarket: '/workstation/talent-market',
   researcherEditor: '/workstation/researcher-editor',
   documents: '/workstation/documents',
-  community: '/workstation/community',
+  community: '/workstation/ai-community',
   newsAnalysis: '/workstation/news-analysis',
   preopen: '/workstation/overview',
   tasks: '/workstation/tasks',

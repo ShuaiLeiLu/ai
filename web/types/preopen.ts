@@ -21,17 +21,26 @@ export interface HotNewsItem {
 
 export interface AiDigest {
   digest_id: string;
+  report_title?: string | null;
   headline: string;
   interval_start: string;
   interval_end: string;
   generated_at: string;
   sentiment: 'bullish' | 'neutral' | 'bearish';
   key_points: string[];
+  report_sections?: AiDigestSection[];
   news_drivers?: string[];
   opportunity_sectors?: string[];
   risk_sectors?: string[];
   intraday_watch?: string[];
   simulation_plan?: string[];
+}
+
+export interface AiDigestSection {
+  title: string;
+  paragraphs: string[];
+  bullets: string[];
+  table: Record<string, string>[];
 }
 
 export interface MarketIndicator {
@@ -51,6 +60,9 @@ export interface AnomalyItem {
   turnover_ratio: number;
   risk_tags: string[];
   note: string;
+  risk_type?: string | null;
+  risk_window?: string | null;
+  is_new?: boolean;
 }
 
 export interface AnomalyOverview {

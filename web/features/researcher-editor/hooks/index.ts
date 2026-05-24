@@ -5,6 +5,7 @@ import { ResearcherCreatePayload, ResearcherTestChatRequest, ResearcherUpdatePay
 
 const featureKey = 'researcher-editor';
 const marketFeatureKey = 'researcher-market';
+const workbenchFeatureKey = 'researcher-workbench';
 
 export const useResearcherDetail = (researcherId?: string) => {
   return useQuery({
@@ -62,6 +63,7 @@ export const useUpdateResearcher = () => {
     onSuccess: (_, vars) => {
       queryClient.invalidateQueries({ queryKey: [featureKey, 'detail', vars.researcherId] });
       queryClient.invalidateQueries({ queryKey: [marketFeatureKey] });
+      queryClient.invalidateQueries({ queryKey: [workbenchFeatureKey] });
     }
   });
 };

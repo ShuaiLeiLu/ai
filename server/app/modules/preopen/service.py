@@ -36,6 +36,7 @@ from app.integrations.akshare.client import (
 from app.integrations.llm.client import LLMMessage, get_llm_client
 from app.modules.preopen.schemas import (
     AiDigest,
+    AiDigestSection,
     AnomalyItem,
     AnomalyOverview,
     HotNewsItem,
@@ -55,6 +56,89 @@ logger = logging.getLogger(__name__)
 # LLM 结果缓存（5 分钟）
 _llm_digest_cache: dict[str, Any] = {"data": None, "expires_at": 0.0}
 _LLM_CACHE_TTL = 300  # 5 分钟
+
+
+def _digest_report_title(calendar_trade_date: date) -> str:
+    return f"研判官·{calendar_trade_date.strftime('%m月%d日')}盘前热讯全洞察报告"
+
+
+def _build_digest_sections(
+    *,
+    headline: str,
+    key_points: list[str],
+    news_drivers: list[str],
+    opportunity_sectors: list[str],
+    risk_sectors: list[str],
+    intraday_watch: list[str],
+    simulation_plan: list[str],
+    total_zt: int | None = None,
+    multi_board: int | None = None,
+    max_consecutive: int | None = None,
+    industry_text: str | None = None,
+) -> list[AiDigestSection]:
+    overview_rows = [
+        {"指标": "涨停家数", "当前值": str(total_zt if total_zt is not None else "待同步"), "观察": "情绪强度核心指标"},
+        {"指标": "连板数量", "当前值": str(multi_board if multi_board is not None else "待同步"), "观察": "短线接力温度"},
+        {"指标": "最高连板", "当前值": str(max_consecutive if max_consecutive is not None else "待同步"), "观察": "高度空间"},
+        {"指标": "主线方向", "当前值": industry_text or "待同步", "观察": "资金攻击方向"},
+    ]
+    opportunity_text = "、".join(opportunity_sectors[:5]) or "暂无明确机会方向，等待开盘资金验证。"
+    risk_text = "、".join(risk_sectors[:5]) or "暂无明显扩散风险，但仍需跟踪高位题材回落。"
+
+    return [
+        AiDigestSection(
+            title="一、先抛观点：核心判断",
+            paragraphs=[headline],
+            bullets=key_points[:5],
+        ),
+        AiDigestSection(
+            title="二、盘面速览：市场结构",
+            paragraphs=["用涨跌停生态、连板高度和行业集中度判断开盘前情绪温度。"],
+            table=overview_rows,
+        ),
+        AiDigestSection(
+            title="三、快讯分类总表",
+            paragraphs=["以下新闻驱动来自最新热讯与实时快讯，优先关注能形成板块映射的催化。"],
+            bullets=news_drivers[:8] or ["暂无可用快讯，建议开盘后观察资金选择。"],
+        ),
+        AiDigestSection(
+            title="四、矛盾点挖掘",
+            paragraphs=[
+                f"机会方向集中在 {opportunity_text}；风险方向集中在 {risk_text}。",
+                "若新闻强、板块弱，说明资金认可度不足；若板块先行扩散，则题材有望从消息驱动切换为资金驱动。",
+            ],
+        ),
+        AiDigestSection(
+            title="五、资金与情绪信号",
+            bullets=intraday_watch[:6] or ["观察开盘 15 分钟成交额承接。", "观察昨日涨停溢价和连板晋级率。"],
+        ),
+        AiDigestSection(
+            title="六、核心题材深挖",
+            paragraphs=[f"重点跟踪：{opportunity_text}。"],
+            bullets=[f"{sector}：等待竞价强度、涨停扩散和龙头封单共同确认。" for sector in opportunity_sectors[:5]],
+        ),
+        AiDigestSection(
+            title="七、风险警示",
+            bullets=risk_sectors[:6] or ["暂无明显扩散风险。"],
+        ),
+        AiDigestSection(
+            title="八、操作铁律",
+            bullets=[
+                "不追无板块共振的单点消息。",
+                "单一方向仓位不超过总仓位三成。",
+                "若开盘半小时热点未扩散，降低追涨动作。",
+                "若炸板率快速上升，优先保护模拟盘收益。",
+            ],
+        ),
+        AiDigestSection(
+            title="九、重点盯盘清单",
+            bullets=simulation_plan[:6] or ["只在新闻、题材和资金三者共振时开仓。"],
+        ),
+        AiDigestSection(
+            title="十、总结",
+            paragraphs=["本报告用于盘前观察和模拟盘推演，不构成投资建议。开盘后以真实成交量、涨停扩散和风险事件变化为准。"],
+        ),
+    ]
 
 
 def _make_calendar() -> TradingCalendarHint:
@@ -200,12 +284,32 @@ class PreopenService:
 
         return AiDigest(
             digest_id=f"digest_{calendar.trade_date.isoformat()}",
+            report_title=_digest_report_title(calendar.trade_date),
             headline=headline,
             interval_start=now - timedelta(hours=12),
             interval_end=now,
             generated_at=now,
             sentiment=sentiment,
             key_points=key_points,
+            report_sections=_build_digest_sections(
+                headline=headline,
+                key_points=key_points,
+                news_drivers=[n.title for n in get_live_news_merged()[:8]],
+                opportunity_sectors=[ind for ind, _ in top_industries[:3]],
+                risk_sectors=["跌停池扩散方向" if len(get_limit_down_pool()) > 5 else "暂无明显扩散风险"],
+                intraday_watch=[
+                    "09:25-09:40 观察昨日涨停溢价和连板高度是否继续打开",
+                    "10:30 前确认资金是否沿新闻催化方向形成板块共振",
+                ],
+                simulation_plan=[
+                    "模拟盘只在新闻方向、涨停结构和个股承接共振时开仓",
+                    "若热点只有单点消息无板块跟随，优先观望或降低仓位",
+                ],
+                total_zt=total_zt,
+                multi_board=multi_board,
+                max_consecutive=max_consecutive,
+                industry_text=industry_text,
+            ),
             news_drivers=[n.title for n in get_live_news_merged()[:3]],
             opportunity_sectors=[ind for ind, _ in top_industries[:3]],
             risk_sectors=["跌停池扩散方向" if len(get_limit_down_pool()) > 5 else "暂无明显扩散风险"],
@@ -332,12 +436,22 @@ class PreopenService:
 
         return AiDigest(
             digest_id=f"digest_{calendar.trade_date.isoformat()}",
+            report_title=_digest_report_title(calendar.trade_date),
             headline=headline,
             interval_start=now - timedelta(hours=12),
             interval_end=now,
             generated_at=now,
             sentiment=sentiment,
             key_points=key_points,
+            report_sections=_build_digest_sections(
+                headline=headline,
+                key_points=key_points if isinstance(key_points, list) else [],
+                news_drivers=news_drivers if isinstance(news_drivers, list) else [],
+                opportunity_sectors=opportunity_sectors if isinstance(opportunity_sectors, list) else [],
+                risk_sectors=risk_sectors if isinstance(risk_sectors, list) else [],
+                intraday_watch=intraday_watch if isinstance(intraday_watch, list) else [],
+                simulation_plan=simulation_plan if isinstance(simulation_plan, list) else [],
+            ),
             news_drivers=news_drivers if isinstance(news_drivers, list) else [],
             opportunity_sectors=opportunity_sectors if isinstance(opportunity_sectors, list) else [],
             risk_sectors=risk_sectors if isinstance(risk_sectors, list) else [],
@@ -347,8 +461,73 @@ class PreopenService:
 
     # ─────────────── 市场指标 ───────────────
 
+    @staticmethod
+    def _build_main_index_indicators() -> list[MarketIndicator]:
+        """主要指数行情：交易时段优先取实时（新浪），回退到最近收盘价（akshare 日K）。"""
+        from app.integrations.akshare.client import (
+            get_index_daily_bars,
+            get_main_index_quotes,
+        )
+
+        # 目标 4 大指数：上证 / 深证 / 创业板 / 恒生科技（恒科暂用沪深 300 兜底）
+        targets = [
+            ("sh000001", "上证指数"),
+            ("sz399001", "深证成指"),
+            ("sz399006", "创业板指"),
+            ("sh000300", "沪深300"),
+        ]
+
+        # 1. 优先尝试实时
+        live = {}
+        try:
+            live = get_main_index_quotes()
+        except Exception:
+            live = {}
+
+        indicators: list[MarketIndicator] = []
+        for code, label in targets:
+            value = 0.0
+            change_pct = 0.0
+            change_amt = 0.0
+            if code in live:
+                q = live[code]
+                value = q.price
+                change_amt = q.change
+                change_pct = q.change_pct
+            else:
+                # 回退：取最近一日收盘（前一日为对比）
+                try:
+                    bars = get_index_daily_bars(symbol=code, days=2)
+                    if bars:
+                        latest = bars[-1]
+                        value = float(latest.close)
+                        if len(bars) >= 2:
+                            prev_close = float(bars[-2].close)
+                            change_amt = value - prev_close
+                            change_pct = (change_amt / prev_close * 100) if prev_close else 0.0
+                except Exception:
+                    pass
+            direction = "up" if change_pct > 0 else ("down" if change_pct < 0 else "flat")
+            sign_amt = "+" if change_amt >= 0 else ""
+            sign_pct = "+" if change_pct >= 0 else ""
+            indicators.append(
+                MarketIndicator(
+                    indicator=f"index_{code}",
+                    label=label,
+                    value=round(value, 2),
+                    unit="",
+                    direction=direction,
+                    reference=f"{sign_amt}{change_amt:.2f} ({sign_pct}{change_pct:.2f}%)",
+                )
+            )
+        return indicators
+
     def list_market_indicators(self) -> list[MarketIndicator]:
-        """市场指标卡 —— 基于涨停池真实数据统计。"""
+        """市场指标卡 —— 主要指数（4）+ 涨停结构指标（4）。"""
+        # ── 1. 主要指数 ──
+        index_indicators = self._build_main_index_indicators()
+
+        # ── 2. 涨停结构 ──
         pool = get_limit_up_pool()
         dt_pool = get_limit_down_pool()
 
@@ -400,7 +579,8 @@ class PreopenService:
                 reference=f"涨停 {total_zt} / 跌停 {total_dt}",
             ),
         ]
-        return indicators
+        # 指数 4 个 + 结构指标 4 个 = 总 8 个
+        return index_indicators + indicators
 
     # ─────────────── 异常波动 ───────────────
 
@@ -427,6 +607,9 @@ class PreopenService:
                     turnover_ratio=s.turnover_ratio,
                     risk_tags=tags or ["high_turnover"],
                     note=f"换手 {s.turnover_ratio:.1f}%，炸板 {s.break_count} 次" if s.break_count else f"换手 {s.turnover_ratio:.1f}%，成交活跃",
+                    risk_type="尾盘异动监控",
+                    risk_window="盘中/尾盘",
+                    is_new=s.break_count >= 2 or s.turnover_ratio >= 20,
                 ))
         tail_moves = tail_moves[:5]  # 最多展示 5 条
 
@@ -441,6 +624,9 @@ class PreopenService:
                 turnover_ratio=s.turnover_ratio,
                 risk_tags=["abnormal_volatility"],
                 note=f"跌停，换手率 {s.turnover_ratio:.1f}%",
+                risk_type="交易所异常波动风险",
+                risk_window="连续10/30个交易日",
+                is_new=True,
             ))
         severe = severe[:5]
 

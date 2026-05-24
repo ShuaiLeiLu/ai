@@ -16,3 +16,8 @@ export interface HealthResponse {
   environment: string;
   timestamp: string;
 }
+
+export interface OperationResponse {
+  message: string;
+  resource_id?: string | null;
+}

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.modules.researchers.schemas import (
+    ResearcherDetail,
     WorkbenchHiredResearcher,
     WorkbenchHotDocument,
     WorkbenchPublicRankItem,
@@ -148,6 +149,66 @@ async def test_async_list_public_rankings_uses_trading_account_snapshot_pnl() ->
     small_cap_rank = rankings[0]
     assert small_cap_rank.today_yield_rate == pytest.approx(1750.0 / (985000.0 - 1750.0))
     assert small_cap_rank.month_yield_rate == pytest.approx(-0.015)
+
+
+@pytest.mark.asyncio
+async def test_async_test_chat_falls_back_to_market_snapshot_when_llm_unconfigured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = ResearcherService()
+    detail = ResearcherDetail(
+        researcher_id="r_demo",
+        name="情绪超短·阿发",
+        title="超短研究员",
+        style="情绪周期",
+        status="active",
+        today_pnl=0.0,
+        win_rate_30d=0.0,
+        level="资深",
+        description="专注题材与涨停结构。",
+        prompt="",
+        visibility="public",
+        published_version="v2",
+        skills=[],
+        knowledge_bases=[],
+        mcp_servers=[],
+        self_drive_tasks=[],
+        created_at=datetime(2026, 5, 24),
+        updated_at=datetime(2026, 5, 24),
+    )
+
+    class FakeLlm:
+        is_configured = False
+
+    async def fake_detail(*_args: object, **_kwargs: object) -> ResearcherDetail:
+        return detail
+
+    async def fake_run_sync(fn: object, *args: object, **_kwargs: object) -> str:
+        return fn(*args)  # type: ignore[operator]
+
+    monkeypatch.setattr(service, "async_get_researcher", fake_detail)
+    monkeypatch.setattr("app.modules.researchers.service.get_llm_client", lambda: FakeLlm())
+    monkeypatch.setattr("app.modules.researchers.service.run_sync", fake_run_sync)
+    monkeypatch.setattr(
+        "app.modules.researchers.service.get_limit_up_pool",
+        lambda: [
+            SimpleNamespace(name="测试龙头", symbol="000001", consecutive=3, amount=10_000_000),
+        ],
+    )
+    monkeypatch.setattr(
+        "app.modules.researchers.service.get_live_news_merged",
+        lambda: [
+            SimpleNamespace(title="测试快讯：半导体设备订单增长"),
+        ],
+    )
+
+    result = await service.async_test_chat(object(), "r_demo", "半导体还能追吗？")  # type: ignore[arg-type]
+
+    assert result.researcher_id == "r_demo"
+    assert result.version_used == "v2"
+    assert "半导体还能追吗" in result.answer
+    assert "测试龙头(000001)3板" in result.answer
+    assert "不构成投资建议" in result.answer
 
 
 @pytest.mark.asyncio

@@ -4,6 +4,7 @@ from __future__ import annotations
 import time
 from collections import defaultdict
 from datetime import UTC, datetime
+from textwrap import shorten
 from uuid import uuid4
 
 from fastapi import HTTPException, status
@@ -11,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Load, load_only, noload
 
+from app.integrations.akshare.client import get_limit_up_pool, get_live_news_merged, run_sync
 from app.integrations.llm.client import LLMMessage, get_llm_client
 from app.models.researcher import Researcher as ResearcherModel
 from app.models.researcher import ResearcherHire as HireModel
@@ -616,6 +618,7 @@ class ResearcherService:
                     view_count=None,
                     comment_count=None,
                     metrics_ready=False,
+                    is_vip_only=document.doc_type in {"analysis", "stock"},
                 )
             )
         return hot_documents
@@ -642,16 +645,52 @@ class ResearcherService:
         ]
 
         llm = get_llm_client()
-        if not llm.is_configured:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="LLM 服务未配置")
-
-        answer = await llm.chat(messages)
+        if llm.is_configured:
+            answer = await llm.chat(messages)
+        else:
+            answer = await run_sync(self._build_test_chat_fallback_answer, detail, question)
         return ResearcherTestChatResponse(
             researcher_id=researcher_id,
             question=question,
             answer=answer,
             version_used=version_used,
             reply_time=datetime.now(tz=UTC),
+        )
+
+    @staticmethod
+    def _build_test_chat_fallback_answer(detail: ResearcherDetail, question: str) -> str:
+        """LLM 未配置时，用 AkShare 市场快照生成可用的结构化投研答复。"""
+        pool = get_limit_up_pool()
+        live_news = get_live_news_merged()
+
+        total_limit_up = len(pool)
+        max_board = max((item.consecutive for item in pool), default=0)
+        leaders = sorted(pool, key=lambda item: (item.consecutive, item.amount), reverse=True)[:5]
+        top_news = live_news[:3]
+
+        leader_text = "、".join(
+            f"{item.name}({item.symbol}){item.consecutive}板" for item in leaders
+        ) or "暂无涨停龙头数据"
+        news_text = "\n".join(
+            f"- {shorten(item.title, width=42, placeholder='...')}" for item in top_news
+        ) or "- 暂无实时快讯"
+
+        mood = "偏强" if total_limit_up >= 60 else "中性偏弱" if total_limit_up < 30 else "中性"
+
+        return (
+            f"我是「{detail.name}」，当前按「{detail.style}」框架回答：\n\n"
+            f"**问题识别**：{question}\n\n"
+            f"**市场快照**：当前涨停 {total_limit_up} 家，最高 {max_board} 连板，短线情绪{mood}。"
+            f"领涨线索包括：{leader_text}。\n\n"
+            f"**最新催化**：\n{news_text}\n\n"
+            "**研判**：在 LLM 深度推理未启用时，我先用实时快讯和涨停结构做降级判断。"
+            "如果问题涉及个股，优先检查它是否和当前领涨题材、政策催化、成交承接同向；"
+            "如果只靠单条消息驱动、没有板块涨停扩散，仓位应降低。\n\n"
+            "**执行建议**：\n"
+            "1. 先确认题材是否有 3 家以上同向涨停或核心股主动放量。\n"
+            "2. 若已有持仓，优先用分批止盈/移动止损管理，不在情绪高点一次性加仓。\n"
+            "3. 若准备新开仓，等待开盘后 30-60 分钟确认承接，再用小仓位试错。\n\n"
+            "以上为基于公开行情与资讯的 AI 观察，不构成投资建议。"
         )
 
     async def async_get_workbench_overview(

@@ -79,7 +79,7 @@ export function WorkstationShell({ children }: PropsWithChildren) {
         placement="left"
         closable={false}
         className="md:!hidden"
-        styles={{ wrapper: { width: 260 }, body: { padding: 0 } }}
+        styles={{ body: { padding: 0 } }}
       >
         <WorkstationSidebarMobile />
       </Drawer>
@@ -103,7 +103,7 @@ export function WorkstationShell({ children }: PropsWithChildren) {
 function ShellLoading({ message }: { message: string }) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-ink-0">
-      <Space direction="vertical" size={8} align="center">
+      <Space orientation="vertical" size={8} align="center">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-ink-50 border-t-brand-600" />
         <span className="text-sm text-ink-400">{message}</span>
       </Space>

@@ -54,3 +54,15 @@ def get_current_user_id(
     if credentials is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="缺少访问令牌")
     return extract_user_id_from_token(credentials.credentials)
+
+
+def get_optional_current_user_id(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
+) -> str | None:
+    """Best-effort user id extraction for public endpoints with optional personalization."""
+    if credentials is None:
+        return None
+    try:
+        return extract_user_id_from_token(credentials.credentials)
+    except HTTPException:
+        return None

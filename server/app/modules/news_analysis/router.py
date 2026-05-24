@@ -7,6 +7,7 @@ AKShare 是同步阻塞调用，通过线程池避免阻塞 asyncio 事件循环
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from typing import Any
 
@@ -24,6 +25,8 @@ from app.modules.news_analysis.schemas import (
 )
 from app.modules.news_analysis.service import NewsAnalysisService
 from app.schemas.common import ApiResponse, ListResponse
+
+logger = logging.getLogger(__name__)
 
 # ── 聚合接口缓存 ──
 _all_cache: dict[str, Any] = {"data": None, "expires_at": 0.0}
@@ -47,8 +50,12 @@ async def feed(
 
 @router.get("/ai-panels")
 async def ai_panels() -> ApiResponse[ListResponse[NewsAiPanel]]:
-    """AI 智能分析面板 —— 仅返回真实 LLM 解读结果。"""
-    items = await service.generate_ai_panels_with_llm()
+    """AI 智能分析面板 —— LLM 优先，未配置或失败时回退到 AkShare 结构化分析。"""
+    try:
+        items = await service.generate_ai_panels_with_llm()
+    except Exception:
+        logger.warning("[资讯分析] LLM 面板不可用，回退到 AkShare 结构化分析", exc_info=True)
+        items = await run_sync(service.list_ai_panels)
     return ApiResponse(data=ListResponse(items=items, total=len(items)))
 
 

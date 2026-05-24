@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import * as api from '../api';
 
@@ -29,3 +29,30 @@ export const useDocumentDetail = (documentId?: string) =>
     refetchOnWindowFocus: false,
   });
 
+export const useDocumentComments = (documentId?: string, enabled = true) =>
+  useQuery({
+    queryKey: [featureKey, 'comments', documentId ?? 'none'],
+    queryFn: () => api.listDocumentComments(documentId as string),
+    enabled: Boolean(documentId) && enabled,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
+
+export const useCreateDocumentComment = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      documentId,
+      content,
+      replyToId,
+    }: {
+      documentId: string;
+      content: string;
+      replyToId?: string | null;
+    }) => api.createDocumentComment(documentId, content, replyToId),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: [featureKey, 'comments', variables.documentId] });
+      queryClient.invalidateQueries({ queryKey: [featureKey, 'detail', variables.documentId] });
+    },
+  });
+};

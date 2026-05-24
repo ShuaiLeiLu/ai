@@ -25,6 +25,7 @@ export interface HotDocument {
   view_count: number | null;
   comment_count: number | null;
   metrics_ready: boolean;
+  is_vip_only?: boolean;
 }
 
 export interface PublicRankItem {

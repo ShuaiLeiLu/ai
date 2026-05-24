@@ -63,10 +63,12 @@ def get_default_module_registry() -> ModuleRegistry:
             ModuleSpec(name="market_data", router_module="app.modules.market_data.router"),
             ModuleSpec(name="preopen", router_module="app.modules.preopen.router"),
             ModuleSpec(name="community", router_module="app.modules.community.router"),
+            ModuleSpec(name="ai_community", router_module="app.modules.community.router", router_attr="legacy_router"),
             ModuleSpec(name="notes", router_module="app.modules.notes.router"),
             ModuleSpec(name="webhooks", router_module="app.modules.webhooks.router"),
             ModuleSpec(name="billing", router_module="app.modules.billing.router"),
             ModuleSpec(name="ecosystem", router_module="app.modules.ecosystem.router"),
             ModuleSpec(name="trading", router_module="app.modules.trading.router"),
+            ModuleSpec(name="event_driven", router_module="app.modules.event_driven.router"),
         ]
     )
