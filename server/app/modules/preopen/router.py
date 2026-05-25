@@ -7,8 +7,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import date
+from collections.abc import Callable
+from datetime import date, datetime, time
 from typing import TypeVar
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -35,7 +37,8 @@ from app.modules.preopen.skill_service import (
     stream_preopen_chain,
 )
 from app.modules.preopen import snapshots
-from app.modules.preopen.snapshot_cache import SnapshotSpec, load_snapshot
+from app.modules.preopen.snapshot_cache import SnapshotSpec, load_snapshot_payload
+from app.integrations.akshare.client import run_sync
 from app.schemas.common import ApiResponse, ListResponse
 
 logger = logging.getLogger(__name__)
@@ -44,23 +47,72 @@ T = TypeVar("T")
 router = APIRouter(prefix="/preopen", tags=["preopen"])
 service = PreopenService()
 
+_A_SHARE_MARKET_SNAPSHOT_NAMES = {
+    snapshots.MARKET_INDICATORS.name,
+    snapshots.STOCK_RANK_UP.name,
+    snapshots.STOCK_RANK_DOWN.name,
+    snapshots.INDUSTRY_BOARDS.name,
+    snapshots.LIMIT_UP_LADDER.name,
+    snapshots.ANOMALIES.name,
+}
+_CN_TZ = ZoneInfo("Asia/Shanghai")
+_TODAY_SNAPSHOT_START = time(9, 15)
+
+
+def _requires_today_snapshot(spec: SnapshotSpec[object]) -> bool:
+    now = datetime.now(tz=_CN_TZ)
+    return (
+        spec.name in _A_SHARE_MARKET_SNAPSHOT_NAMES
+        and now.weekday() < 5
+        and now.time() >= _TODAY_SNAPSHOT_START
+    )
+
+
+def _snapshot_matches_current_session(spec: SnapshotSpec[object], updated_at: datetime) -> bool:
+    if not _requires_today_snapshot(spec):
+        return True
+    return updated_at.astimezone(_CN_TZ).date() == datetime.now(tz=_CN_TZ).date()
+
+
+async def _fetch_live_or_empty(spec: SnapshotSpec[T], fetch: Callable[[], T] | None) -> T:
+    if fetch is None:
+        return spec.empty_factory()
+    try:
+        return await asyncio.wait_for(run_sync(fetch), timeout=45)
+    except Exception:
+        logger.exception("[盘前速览] 实时数据拉取失败，返回空快照：%s", spec.name)
+        return spec.empty_factory()
+
 
 async def _load_snapshot_or_empty(redis: object, spec: SnapshotSpec[T]) -> T:
     try:
-        data = await load_snapshot(redis, spec)
-        return data if data is not None else spec.empty_factory()
+        payload = await load_snapshot_payload(redis, spec)
+        return payload.data if payload is not None else spec.empty_factory()
     except Exception:
         logger.info("[盘前速览] 快照不可用，返回空快照：%s", spec.name)
         return spec.empty_factory()
 
 
-async def _load_list_or_live(redis: object, spec: SnapshotSpec[list[T]], fetch: object | None = None) -> list[T]:
-    del fetch
-    return await _load_snapshot_or_empty(redis, spec)
+async def _load_or_live(redis: object, spec: SnapshotSpec[T], fetch: Callable[[], T] | None = None) -> T:
+    try:
+        payload = await load_snapshot_payload(redis, spec)
+        if payload is not None and _snapshot_matches_current_session(spec, payload.updated_at):
+            return payload.data
+    except Exception:
+        logger.info("[盘前速览] 快照不可用，尝试实时拉取：%s", spec.name)
+    return await _fetch_live_or_empty(spec, fetch)
+
+
+async def _load_list_or_live(
+    redis: object,
+    spec: SnapshotSpec[list[T]],
+    fetch: Callable[[], list[T]] | None = None,
+) -> list[T]:
+    return await _load_or_live(redis, spec, fetch)
 
 
 async def _load_anomalies_or_live(redis: object) -> AnomalyOverview:
-    return await _load_snapshot_or_empty(redis, snapshots.ANOMALIES)
+    return await _load_or_live(redis, snapshots.ANOMALIES, service.get_anomalies)
 
 
 async def _load_trends_or_live(redis: object) -> TrendOverview:

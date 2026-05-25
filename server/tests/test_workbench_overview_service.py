@@ -279,22 +279,22 @@ async def test_async_test_chat_falls_back_to_market_snapshot_when_llm_unconfigur
 
 
 @pytest.mark.asyncio
-async def test_async_list_public_rankings_uses_trading_account_view_pnl(
+async def test_async_list_public_rankings_uses_trading_account_snapshot_pnl_over_replay(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = ResearcherService()
 
-    stale_winner = SimpleNamespace(id="r_stale", name="旧字段高收益")
-    view_winner = SimpleNamespace(id="r_view", name="资金曲线高收益")
-    stale_account = SimpleNamespace(
-        id="acct_stale",
+    snapshot_winner = SimpleNamespace(id="r_snapshot", name="账户快照高收益")
+    replay_winner = SimpleNamespace(id="r_replay", name="资金曲线高收益")
+    snapshot_account = SimpleNamespace(
+        id="acct_snapshot",
         total_asset=990000.0,
         available_cash=990000.0,
         holding_value=0.0,
         daily_pnl=50000.0,
     )
-    view_account = SimpleNamespace(
-        id="acct_view",
+    replay_account = SimpleNamespace(
+        id="acct_replay",
         total_asset=1005000.0,
         available_cash=1005000.0,
         holding_value=0.0,
@@ -303,7 +303,7 @@ async def test_async_list_public_rankings_uses_trading_account_view_pnl(
 
     class FakeResult:
         def all(self) -> list[tuple[SimpleNamespace, SimpleNamespace]]:
-            return [(stale_winner, stale_account), (view_winner, view_account)]
+            return [(snapshot_winner, snapshot_account), (replay_winner, replay_account)]
 
     class FakeSession:
         async def execute(self, *_args: object, **_kwargs: object) -> FakeResult:
@@ -311,17 +311,17 @@ async def test_async_list_public_rankings_uses_trading_account_view_pnl(
 
     async def fake_load_account_replays(*_args: object, **_kwargs: object) -> dict[str, object]:
         return {
-            "acct_stale": SimpleNamespace(daily_equity={"2000-01-01": 1_000_000.0}),
-            "acct_view": SimpleNamespace(daily_equity={"2000-01-01": 1_000_000.0}),
+            "acct_snapshot": SimpleNamespace(daily_equity={"2000-01-01": 1_000_000.0}),
+            "acct_replay": SimpleNamespace(daily_equity={"2000-01-01": 1_000_000.0}),
         }
 
     monkeypatch.setattr(service, "_load_account_replays", fake_load_account_replays)
 
     rankings = await service.async_list_public_rankings(FakeSession(), sort_by="today")  # type: ignore[arg-type]
 
-    assert [item.name for item in rankings] == ["资金曲线高收益", "旧字段高收益"]
-    assert rankings[0].today_yield_rate == pytest.approx(5000.0 / 1_000_000.0)
-    assert rankings[1].today_yield_rate == pytest.approx(-10000.0 / 1_000_000.0)
+    assert [item.name for item in rankings] == ["账户快照高收益", "资金曲线高收益"]
+    assert rankings[0].today_yield_rate == pytest.approx(50000.0 / (990000.0 - 50000.0))
+    assert rankings[1].today_yield_rate == pytest.approx(-50000.0 / (1005000.0 + 50000.0))
 
 
 def test_researcher_card_uses_trading_account_metrics_not_researcher_seed_fields() -> None:
@@ -347,3 +347,24 @@ def test_researcher_card_uses_trading_account_metrics_not_researcher_seed_fields
     assert card.month_yield_rate == pytest.approx(-0.015)
     assert card.total_asset == 985000.0
     assert card.win_rate_30d is None
+
+
+def test_researcher_card_uses_snapshot_daily_pnl_before_replay_fallback() -> None:
+    researcher = SimpleNamespace(
+        id="r_snapshot",
+        avatar_url=None,
+        name="账户快照",
+        description="策略说明",
+        status="active",
+        tags=[],
+        today_pnl=0.0,
+        win_rate_30d=0.0,
+        level="LV.1",
+    )
+    account = SimpleNamespace(total_asset=990000.0, daily_pnl=50000.0)
+    replay = SimpleNamespace(daily_equity={"2000-01-01": 1_000_000.0})
+
+    card = ResearcherService._researcher_to_hired_card(researcher, account, replay=replay)
+
+    assert card.today_yield == 50000.0
+    assert card.today_yield_rate == pytest.approx(50000.0 / (990000.0 - 50000.0))

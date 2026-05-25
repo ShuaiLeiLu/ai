@@ -26,6 +26,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.integrations.akshare.client import (
+    get_market_data_trade_date,
     get_industry_boards,
     get_limit_down_pool,
     get_limit_up_pool,
@@ -723,7 +724,8 @@ class PreopenService:
 
     def list_limit_up_ladder(self) -> list[LimitUpLadderItem]:
         """涨停天梯 —— 从涨停池中按连板数排序。"""
-        pool = get_limit_up_pool()
+        trade_date = get_market_data_trade_date()
+        pool = get_limit_up_pool(trade_date)
         # 按连板数降序
         sorted_pool = sorted(pool, key=lambda s: (s.consecutive, s.amount), reverse=True)
 
@@ -740,7 +742,9 @@ class PreopenService:
             ladder.append(LimitUpLadderItem(
                 symbol=s.symbol,
                 name=s.name,
+                trade_date=trade_date,
                 ladder_level=s.consecutive,
+                change_pct=s.change_pct,
                 first_seal_time=s.first_seal_time or "",
                 final_seal_time=s.last_seal_time or "",
                 reason=s.industry or "",

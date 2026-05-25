@@ -175,8 +175,7 @@ class TradingService:
             if previous_dates:
                 base_equity = float(daily_equity[max(previous_dates)])
                 return round(total_asset - base_equity, 2)
-            return round(total_asset - initial_capital, 2)
-        return round(total_asset - initial_capital, 2)
+        return 0.0
 
     def _account_to_schema(
         self,
@@ -1031,10 +1030,11 @@ class TradingService:
                 allow_fallback=False,
             )
         except Exception as exc:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=f"AI 复盘生成失败：{exc}",
-            ) from exc
+            reflection = _reflection_skill.build_fallback_reflection(
+                researcher_name=researcher.name if researcher else "交易研究员",
+                researcher_prompt=researcher.prompt if researcher else "",
+                trade_context=trade_context,
+            )
         content = self._normalize_analysis_content("analysis", reflection)
         log = TradeLogModel(
             id=f"tl_{uuid4().hex[:8]}",

@@ -17,6 +17,8 @@ function usePreopenAll() {
     queryKey: [PREOPEN_QUERY_KEY, 'all'],
     queryFn: getPreopenAll,
     staleTime: 60_000,
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
     refetchOnWindowFocus: false,
   });
 }

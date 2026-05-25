@@ -11,6 +11,15 @@ from app.modules.trading.reflection_skill import TradingReflectionSkill
 from app.modules.trading.service import TradingService
 
 
+class _AsyncSessionStub:
+    def add(self, item: object) -> None:
+        if getattr(item, "created_at", None) is None:
+            item.created_at = datetime(2026, 5, 25, 9, 30)
+
+    async def commit(self) -> None:
+        pass
+
+
 class _ScalarResult:
     def __init__(self, value: object | None) -> None:
         self._value = value
@@ -514,7 +523,7 @@ async def test_async_get_stats_prefers_persisted_account_snapshots(monkeypatch: 
 
 
 @pytest.mark.asyncio
-async def test_generate_reflection_returns_clear_error_when_llm_unavailable(
+async def test_generate_reflection_uses_fallback_when_llm_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = TradingService()
@@ -547,12 +556,22 @@ async def test_generate_reflection_returns_clear_error_when_llm_unavailable(
         fail_reflection,
     )
 
-    with pytest.raises(HTTPException) as exc_info:
-        await service.async_generate_reflection_for_latest_trade(
-            SimpleNamespace(),
-            account=account,
-            researcher=None,
-        )
+    async def fake_load_realtime_quotes(*_args: object, **_kwargs: object) -> dict[str, object]:
+        return {}
 
-    assert exc_info.value.status_code == 503
-    assert "LLM 服务未配置" in str(exc_info.value.detail)
+    async def fake_build_trade_market_snapshot(*_args: object, **_kwargs: object) -> dict[str, object]:
+        return {}
+
+    monkeypatch.setattr(service, "_load_realtime_quotes", fake_load_realtime_quotes)
+    monkeypatch.setattr(service, "_build_trade_market_snapshot", fake_build_trade_market_snapshot)
+
+    item = await service.async_generate_reflection_for_latest_trade(
+        _AsyncSessionStub(),
+        account=account,
+        researcher=None,
+    )
+
+    assert "AI 复盘暂不可用" not in item.content
+    assert "## 交易复盘" in item.content
+    assert "平安银行" in item.content
+    assert "## 执行反思" in item.content

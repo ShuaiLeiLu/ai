@@ -34,6 +34,7 @@ from threading import Lock
 from typing import Any, Callable, TypeVar
 from urllib.parse import urlencode
 from urllib.request import ProxyHandler, Request, build_opener
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -55,6 +56,7 @@ _proxy_bypass_installed = False
 _proxy_install_lock = Lock()
 _external_data_lock = Lock()
 _DEFAULT_REQUEST_TIMEOUT_SECONDS = 10
+_CN_TZ = ZoneInfo("Asia/Shanghai")
 
 
 def _install_proxy_bypass() -> None:
@@ -960,15 +962,20 @@ def _latest_trade_date() -> date:
     实际生产环境应接入交易日历服务。
     """
     from datetime import timedelta
-    today = date.today()
-    cursor = today
-    # 如果是周末或当天还没开盘（时间 < 09:30），回退
-    now = datetime.now()
-    if now.hour < 9 or (now.hour == 9 and now.minute < 30):
+    now = datetime.now(tz=_CN_TZ)
+    cursor = now.date()
+    # 如果是周末或当天集合竞价尚未开始（时间 < 09:15），回退。
+    # 盘前快照刷新从 09:15 启动，交易日判断要和刷新窗口保持一致。
+    if now.hour < 9 or (now.hour == 9 and now.minute < 15):
         cursor -= timedelta(days=1)
     while cursor.weekday() >= 5:  # 周六=5, 周日=6
         cursor -= timedelta(days=1)
     return cursor
+
+
+def get_market_data_trade_date() -> date:
+    """Return the trade date used by intraday market-pool APIs."""
+    return _latest_trade_date()
 
 
 def invalidate_cache(prefix: str = "") -> None:

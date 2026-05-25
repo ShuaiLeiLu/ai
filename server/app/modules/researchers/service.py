@@ -533,10 +533,15 @@ class ResearcherService:
 
         initial_capital = DEFAULT_INITIAL_CAPITAL
         total_asset = round(float(getattr(account, "total_asset", initial_capital)), 2)
-        daily_pnl = TradingService._derive_recent_pnl(
-            total_asset=total_asset,
-            initial_capital=initial_capital,
-            replay=replay,  # type: ignore[arg-type]
+        account_daily_pnl = getattr(account, "daily_pnl", None)
+        daily_pnl = (
+            round(float(account_daily_pnl), 2)
+            if account_daily_pnl is not None
+            else TradingService._derive_recent_pnl(
+                total_asset=total_asset,
+                initial_capital=initial_capital,
+                replay=replay,  # type: ignore[arg-type]
+            )
         )
         today_start_asset = total_asset - daily_pnl
         return {

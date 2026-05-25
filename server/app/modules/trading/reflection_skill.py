@@ -115,7 +115,11 @@ class TradingReflectionSkill:
         if not llm.is_configured:
             if not allow_fallback:
                 raise RuntimeError("LLM 服务未配置")
-            return self._minimal_confirmation(trade_context)
+            return self.build_fallback_reflection(
+                researcher_name=researcher_name,
+                researcher_prompt=researcher_prompt,
+                trade_context=trade_context,
+            )
 
         # 1. 上下文
         session = trade_context.get("session") if isinstance(trade_context, dict) else None
@@ -151,12 +155,20 @@ class TradingReflectionSkill:
             if not allow_fallback:
                 raise
             logger.warning("交易复盘 LLM 失败: %s", exc)
-            return self._minimal_confirmation(trade_context)
+            return self.build_fallback_reflection(
+                researcher_name=researcher_name,
+                researcher_prompt=researcher_prompt,
+                trade_context=trade_context,
+            )
 
         text = reply.strip()
         if len(text) < 50:
             # LLM 给的内容太短,不像真正复盘
-            return self._minimal_confirmation(trade_context)
+            return self.build_fallback_reflection(
+                researcher_name=researcher_name,
+                researcher_prompt=researcher_prompt,
+                trade_context=trade_context,
+            )
         return text
 
     # ── 上下文加载 ──
@@ -316,28 +328,6 @@ class TradingReflectionSkill:
                     )
 
         return "\n".join(lines)
-
-    # ── 失败兜底 ──
-    @staticmethod
-    def _minimal_confirmation(trade_context: dict[str, Any]) -> str:
-        """LLM 不可用时的最小化确认信息。
-
-        故意写得很短,不掩饰"AI 分析未生成"。
-        宁可显示『复盘暂不可用』,也不要塞 200 行套话假装很有内容。
-        """
-        side = "买入" if trade_context.get("side") == "buy" else "卖出"
-        name = trade_context.get("name") or trade_context.get("symbol") or "标的"
-        symbol = trade_context.get("symbol") or "-"
-        price = trade_context.get("price")
-        quantity = trade_context.get("quantity")
-        amount = trade_context.get("amount")
-        return (
-            f"## 成交确认\n\n"
-            f"{side} **{name}({symbol})**,数量 {quantity},成交价 {price},金额 {amount}。\n\n"
-            f"> AI 复盘暂不可用(LLM 服务异常或未配置)。"
-            f"系统已记录本次成交,可前往交易记录查看明细。\n"
-        )
-
 
 def _is_same_trade(record: TradeRecord, ctx: dict[str, Any]) -> bool:
     """判断 record 是不是本笔成交(避免历史列表里把自己也算进去)。"""

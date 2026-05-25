@@ -126,7 +126,9 @@ class TrendOverview(SchemaModel):
 class LimitUpLadderItem(SchemaModel):
     symbol: str
     name: str
+    trade_date: date | None = None
     ladder_level: int
+    change_pct: float | None = None
     first_seal_time: str
     final_seal_time: str
     reason: str

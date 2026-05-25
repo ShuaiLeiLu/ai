@@ -92,7 +92,9 @@ export interface TrendOverview {
 export interface LimitUpLadderItem {
   symbol: string;
   name: string;
+  trade_date?: string | null;
   ladder_level: number;
+  change_pct?: number | null;
   first_seal_time: string;
   final_seal_time: string;
   reason: string;

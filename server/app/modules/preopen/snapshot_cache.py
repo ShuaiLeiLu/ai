@@ -41,6 +41,12 @@ class SnapshotSpec(Generic[T]):
         return f"{SNAPSHOT_LOCK_PREFIX}{self.name}"
 
 
+@dataclass(frozen=True)
+class SnapshotPayload(Generic[T]):
+    updated_at: datetime
+    data: T
+
+
 def to_jsonable(value: Any) -> Any:
     if isinstance(value, BaseModel):
         return value.model_dump(mode="json")
@@ -55,13 +61,22 @@ def to_jsonable(value: Any) -> Any:
     return value
 
 
-async def load_snapshot(redis: Any, spec: SnapshotSpec[T]) -> T | None:
+async def load_snapshot_payload(redis: Any, spec: SnapshotSpec[T]) -> SnapshotPayload[T] | None:
     raw = await redis.get(spec.redis_key)
     if not raw:
         return None
 
     payload = json.loads(raw)
-    return spec.adapter.validate_python(payload["data"])
+    updated_at = datetime.fromisoformat(str(payload["updated_at"]))
+    return SnapshotPayload(
+        updated_at=updated_at,
+        data=spec.adapter.validate_python(payload["data"]),
+    )
+
+
+async def load_snapshot(redis: Any, spec: SnapshotSpec[T]) -> T | None:
+    payload = await load_snapshot_payload(redis, spec)
+    return payload.data if payload is not None else None
 
 
 async def load_snapshot_or_empty(redis: Any, spec: SnapshotSpec[T]) -> T:

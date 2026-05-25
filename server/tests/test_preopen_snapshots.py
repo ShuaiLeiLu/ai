@@ -11,10 +11,11 @@ from app.modules.preopen import router as preopen_router
 from app.modules.preopen import skill_service as preopen_skill_service
 from app.models.preopen import PreopenAiDigest
 from app.modules.preopen.service import PreopenService
-from app.modules.preopen.schemas import AiDigest, AnomalyItem, HotNewsItem, TrendOverview
+from app.modules.preopen.schemas import AiDigest, AnomalyItem, HotNewsItem, LimitUpLadderItem, TrendOverview
 from app.modules.preopen.router import _load_list_or_live
 from app.modules.preopen.snapshot_cache import load_snapshot, save_snapshot
 from app.modules.preopen.snapshot_refresher import RefreshTarget, _refresh_target
+from app.integrations.akshare import client as akshare_client
 
 
 class FakeRedis:
@@ -204,16 +205,72 @@ def test_trends_builds_real_multi_day_series_from_snapshots() -> None:
     ]
 
 
+def test_market_data_trade_date_uses_shanghai_timezone(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):  # type: ignore[no-untyped-def]
+            current = datetime(2026, 5, 25, 6, 35, tzinfo=UTC)
+            return current.astimezone(tz) if tz else current.replace(tzinfo=None)
+
+    class FixedDate(date):
+        @classmethod
+        def today(cls) -> date:
+            return date(2026, 5, 25)
+
+    monkeypatch.setattr(akshare_client, "datetime", FixedDatetime)
+    monkeypatch.setattr(akshare_client, "date", FixedDate)
+
+    assert akshare_client.get_market_data_trade_date() == date(2026, 5, 25)
+
+
 @pytest.mark.asyncio
-async def test_empty_preopen_snapshot_returns_empty_without_live_fetch(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    del monkeypatch
+async def test_empty_preopen_snapshot_falls_back_to_live_fetch() -> None:
     item = _hot_news_item("实时快讯")
 
     loaded = await _load_list_or_live(FakeRedis(), snapshots.HOT_NEWS, lambda: [item])
 
-    assert loaded == []
+    assert loaded == [item]
+
+
+@pytest.mark.asyncio
+async def test_preopen_all_exposes_live_ladder_trade_date_when_snapshot_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    redis = FakeRedis()
+    await save_snapshot(redis, snapshots.HOT_NEWS, [_hot_news_item("缓存快讯")])
+    await save_snapshot(redis, snapshots.MARKET_INDICATORS, [])
+    await save_snapshot(redis, snapshots.ANOMALIES, snapshots.empty_anomalies())
+    await save_snapshot(redis, snapshots.TRENDS, snapshots.empty_trends())
+    await save_snapshot(redis, snapshots.INDUSTRY_BOARDS, [])
+    await save_snapshot(redis, snapshots.STOCK_RANK_UP, [])
+    await save_snapshot(redis, snapshots.STOCK_RANK_DOWN, [])
+
+    class FakeRedisFactory:
+        def get_client(self) -> FakeRedis:
+            return redis
+
+    monkeypatch.setattr(
+        preopen_router,
+        "get_container",
+        lambda: SimpleNamespace(redis=FakeRedisFactory()),
+    )
+
+    live_item = LimitUpLadderItem(
+        symbol="603000",
+        name="实时涨停",
+        ladder_level=2,
+        first_seal_time="09:35:00",
+        final_seal_time="10:12:00",
+        reason="测试行业",
+        risk_tags=["consecutive_limit_up"],
+        trade_date=date(2026, 5, 25),
+    )
+    monkeypatch.setattr(preopen_router.service, "list_limit_up_ladder", lambda: [live_item])
+
+    response = await preopen_router.preopen_all(session=object())  # type: ignore[arg-type]
+
+    assert response.data.limit_up_ladder == [live_item]
+    assert response.data.limit_up_ladder[0].trade_date == date(2026, 5, 25)
 
 
 @pytest.mark.asyncio

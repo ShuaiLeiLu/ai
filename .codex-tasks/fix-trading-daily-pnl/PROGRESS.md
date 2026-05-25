@@ -17,7 +17,7 @@
 - **Current artifact**: `server/app/modules/trading/service.py`
 - **Key context**: Screenshot shows total asset 1.2508M but today PnL +49,445.67 / +4.09%. `_account_to_schema` derives daily PnL from replay equity, so when the last replay point is older than yesterday it displays a multi-day account delta as today's PnL.
 - **Known issues**: Existing unrelated dirty files: `server/tests/test_preopen_snapshots.py`, `server/tests/test_daily_review_readonly.py`.
-- **Next action**: Report completion with verification evidence and note unrelated full-file test failure.
+- **Next action**: Report completion with verification evidence.
 
 ## Milestone 1: Identify Daily PnL Root Cause
 
@@ -52,11 +52,11 @@
 - **Validation**:
   - `pytest server/tests/test_trading_detail_service.py -k "account or portfolio or current_snapshot_daily_pnl or persisted_daily_pnl" --tb=short` -> 5 passed.
   - `git diff --check -- server/app/modules/trading/service.py server/app/modules/trading/schemas.py server/tests/test_trading_detail_service.py` -> exit 0.
-  - `pytest server/tests/test_trading_detail_service.py --tb=short` -> 14 passed, 1 unrelated failure: `TradingReflectionSkill` has no `build_fallback_reflection` method.
+  - `pytest server/tests/test_trading_detail_service.py --tb=short` -> 15 passed.
 
 ## Final Summary
 
-- **Completed**: The daily PnL display bug is fixed for account/portfolio summary serialization.
+- **Completed**: The daily PnL display bug is fixed for account/portfolio summary serialization, and the trading detail service test file passes.
 - **Files modified**:
   - `server/app/modules/trading/service.py`
   - `server/app/modules/trading/schemas.py`

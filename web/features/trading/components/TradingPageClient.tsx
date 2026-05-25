@@ -231,6 +231,9 @@ export function TradingPageClient() {
   );
 
   const activeResearcher = researchers?.find((r) => r.id === effectiveId);
+  const todayStartAsset = accountQuery.data
+    ? accountQuery.data.total_asset - accountQuery.data.daily_pnl
+    : 0;
 
   return (
     <div className="space-y-4 sm:space-y-5">
@@ -306,13 +309,13 @@ export function TradingPageClient() {
               hint={`持仓 ${positionsQuery.data?.length ?? 0} 只`}
             />
             <StatCard
-              label="近日盈亏"
+              label="今日盈亏"
               value={`${accountQuery.data.daily_pnl > 0 ? '+' : ''}${accountQuery.data.daily_pnl.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
               unit="元"
               direction={accountQuery.data.daily_pnl > 0 ? 'up' : accountQuery.data.daily_pnl < 0 ? 'down' : 'flat'}
               hint={
-                accountQuery.data.total_asset
-                  ? `${accountQuery.data.daily_pnl > 0 ? '+' : ''}${((accountQuery.data.daily_pnl / accountQuery.data.total_asset) * 100).toFixed(2)}%`
+                todayStartAsset > 0
+                  ? `${accountQuery.data.daily_pnl > 0 ? '+' : ''}${((accountQuery.data.daily_pnl / todayStartAsset) * 100).toFixed(2)}%`
                   : undefined
               }
             />
