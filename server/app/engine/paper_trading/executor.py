@@ -9,15 +9,16 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.integrations.openclaw.trade_push import queue_strategy_trade_push
 from app.models.researcher import Researcher
 from app.models.trading import Position, TradeLog, TradeRecord, TradingAccount
-from app.modules.trading.reflection_skill import TradingReflectionSkill
 from app.modules.trading.paper_trading_engine import (
     ORDER_STATUS_FILLED,
     MarketSnapshot,
     compute_sellable_quantity,
     execute_stock_order,
 )
+from app.modules.trading.reflection_skill import TradingReflectionSkill
 
 logger = logging.getLogger(__name__)
 _trading_reflection_skill = TradingReflectionSkill()
@@ -114,25 +115,23 @@ async def do_sell(
     total_fee = execution.total_fee
     pnl = round(float(execution.realized_pnl or 0.0), 2)
 
-    record_id = f"trd_{uuid4().hex[:8]}"
-    session.add(
-        TradeRecord(
-            id=record_id,
-            account_id=account.id,
-            symbol=pos.symbol,
-            name=pos.name,
-            side="sell",
-            quantity=execution.filled_quantity,
-            price=fill_price,
-            commission=total_fee,
-        )
+    record = TradeRecord(
+        id=f"trd_{uuid4().hex[:8]}",
+        account_id=account.id,
+        symbol=pos.symbol,
+        name=pos.name,
+        side="sell",
+        quantity=execution.filled_quantity,
+        price=fill_price,
+        commission=total_fee,
     )
+    session.add(record)
     session.add(
         TradeLog(
             id=f"tl_{uuid4().hex[:8]}",
             account_id=account.id,
             log_type="trade",
-            trade_record_ids=json.dumps([record_id]),
+            trade_record_ids=json.dumps([record.id]),
             title="",
             content="",
         )
@@ -187,6 +186,14 @@ async def do_sell(
     # 即时反映本笔成交后的状态
     from app.modules.trading.service import TradingService
     await TradingService()._refresh_account_snapshot(session, account, cache_only=True)
+    queue_strategy_trade_push(
+        session,
+        researcher=researcher,
+        account=account,
+        record=record,
+        amount=amount,
+        reason=reason,
+    )
 
     logger.info(
         "  [卖出] %s %s %d股 @ %.2f (%s)",
@@ -260,25 +267,23 @@ async def do_buy(
         )
     )
 
-    record_id = f"trd_{uuid4().hex[:8]}"
-    session.add(
-        TradeRecord(
-            id=record_id,
-            account_id=account.id,
-            symbol=target["symbol"],
-            name=target["name"],
-            side="buy",
-            quantity=execution.filled_quantity,
-            price=fill_price,
-            commission=execution.total_fee,
-        )
+    record = TradeRecord(
+        id=f"trd_{uuid4().hex[:8]}",
+        account_id=account.id,
+        symbol=target["symbol"],
+        name=target["name"],
+        side="buy",
+        quantity=execution.filled_quantity,
+        price=fill_price,
+        commission=execution.total_fee,
     )
+    session.add(record)
     session.add(
         TradeLog(
             id=f"tl_{uuid4().hex[:8]}",
             account_id=account.id,
             log_type="trade",
-            trade_record_ids=json.dumps([record_id]),
+            trade_record_ids=json.dumps([record.id]),
             title="",
             content="",
         )
@@ -326,6 +331,14 @@ async def do_buy(
     # 即时反映本笔成交后的状态
     from app.modules.trading.service import TradingService
     await TradingService()._refresh_account_snapshot(session, account, cache_only=True)
+    queue_strategy_trade_push(
+        session,
+        researcher=researcher,
+        account=account,
+        record=record,
+        amount=amount,
+        reason=str(target.get("reason", "符合策略目标池，按交易纪律执行调入")),
+    )
 
     logger.info(
         "  [买入] %s %s %d股 @ %.2f",

@@ -13,6 +13,10 @@ from app.engine.paper_trading.executor import do_buy, do_sell, invalidate_tradin
 from app.engine.paper_trading.state import set_limit_up_symbols
 from app.engine.strategies.market import fetch_realtime_quotes
 from app.integrations.akshare.client import run_sync
+from app.integrations.openclaw.trade_push import (
+    discard_strategy_trade_pushes,
+    flush_strategy_trade_pushes,
+)
 from app.models.researcher import Researcher
 from app.models.trading import Position, TradeLog, TradingAccount
 
@@ -420,6 +424,11 @@ async def execute(session: AsyncSession, researcher: Researcher) -> int:
         )
     )
 
-    await session.commit()
+    try:
+        await session.commit()
+    except Exception:
+        discard_strategy_trade_pushes(session)
+        raise
     invalidate_trading_cache(account, researcher.id)
+    await flush_strategy_trade_pushes(session)
     return trade_count

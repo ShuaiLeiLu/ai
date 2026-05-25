@@ -9,6 +9,10 @@ from app.engine.paper_trading.executor import do_sell, invalidate_trading_cache
 from app.engine.paper_trading.state import get_limit_up_symbols
 from app.engine.strategies.market import fetch_realtime_quotes
 from app.integrations.akshare.client import run_sync
+from app.integrations.openclaw.trade_push import (
+    discard_strategy_trade_pushes,
+    flush_strategy_trade_pushes,
+)
 from app.models.researcher import Researcher
 from app.models.trading import Position, TradingAccount
 
@@ -82,8 +86,13 @@ async def check_limit_up_open(session: AsyncSession) -> dict:
                 logger.info("[涨停检查] %s(%s) 继续涨停，持有", pos.name, sym)
 
     if total_sold > 0:
-        await session.commit()
+        try:
+            await session.commit()
+        except Exception:
+            discard_strategy_trade_pushes(session)
+            raise
         for account, researcher_id in affected:
             invalidate_trading_cache(account, researcher_id)
+        await flush_strategy_trade_pushes(session)
 
     return {"status": "ok", "sold_count": total_sold}

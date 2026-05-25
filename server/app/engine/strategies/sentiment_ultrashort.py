@@ -24,6 +24,10 @@ from app.integrations.akshare.client import (
     get_limit_up_pool,
     run_sync,
 )
+from app.integrations.openclaw.trade_push import (
+    discard_strategy_trade_pushes,
+    flush_strategy_trade_pushes,
+)
 from app.models.researcher import Researcher
 from app.models.trading import Position, TradeLog, TradingAccount
 
@@ -1214,8 +1218,13 @@ async def execute(session: AsyncSession, researcher: Researcher) -> int:
         )
     )
 
-    await session.commit()
+    try:
+        await session.commit()
+    except Exception:
+        discard_strategy_trade_pushes(session)
+        raise
     invalidate_trading_cache(account, researcher.id)
+    await flush_strategy_trade_pushes(session)
     logger.info(
         "[情绪超短] %s 执行完成：情绪 %.1f/%s，成交 %d 笔",
         researcher.name,
