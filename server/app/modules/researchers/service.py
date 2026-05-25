@@ -4,18 +4,22 @@ from __future__ import annotations
 import time
 from collections import defaultdict
 from datetime import UTC, datetime
+import logging
 from textwrap import shorten
 from uuid import uuid4
 
 from fastapi import HTTPException, status
+from pydantic import TypeAdapter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Load, load_only, noload
 
+from app.core.container import get_container
 from app.integrations.akshare.client import get_limit_up_pool, get_live_news_merged, run_sync
 from app.integrations.llm.client import LLMMessage, get_llm_client
 from app.models.researcher import Researcher as ResearcherModel
 from app.models.researcher import ResearcherHire as HireModel
+from app.modules.page_cache import delete_cached, load_cached, save_cached
 from app.repositories.researcher_repo import ResearcherHireRepository, ResearcherRepository
 
 from app.modules.researchers.schemas import (
@@ -37,8 +41,73 @@ from app.modules.researchers.schemas import (
 )
 
 
+logger = logging.getLogger(__name__)
 WORKBENCH_OVERVIEW_CACHE_TTL_SECONDS = 30
 _workbench_overview_cache: dict[str, tuple[float, WorkbenchOverview]] = {}
+_WORKBENCH_OVERVIEW_CACHE_ADAPTER = TypeAdapter(WorkbenchOverview)
+
+
+def _workbench_overview_cache_key(user_id: str, sort_by: WorkbenchRankSortBy) -> str:
+    return f"researchers:workbench:overview:{user_id}:{sort_by}"
+
+
+def _set_workbench_overview_memory_cache(
+    user_id: str,
+    sort_by: WorkbenchRankSortBy,
+    data: WorkbenchOverview,
+) -> None:
+    _workbench_overview_cache[f"{user_id}:{sort_by}"] = (
+        time.monotonic() + WORKBENCH_OVERVIEW_CACHE_TTL_SECONDS,
+        data,
+    )
+
+
+async def _load_workbench_overview_redis_cache(
+    user_id: str,
+    sort_by: WorkbenchRankSortBy,
+) -> WorkbenchOverview | None:
+    try:
+        redis = get_container().redis.get_client()
+        data = await load_cached(redis, _workbench_overview_cache_key(user_id, sort_by), _WORKBENCH_OVERVIEW_CACHE_ADAPTER)
+        if data is not None:
+            _set_workbench_overview_memory_cache(user_id, sort_by, data)
+        return data
+    except Exception:
+        logger.warning("[研究员工作台] Redis 缓存读取失败", exc_info=True)
+        return None
+
+
+async def _save_workbench_overview_redis_cache(
+    user_id: str,
+    sort_by: WorkbenchRankSortBy,
+    data: WorkbenchOverview,
+) -> None:
+    try:
+        redis = get_container().redis.get_client()
+        await save_cached(
+            redis,
+            _workbench_overview_cache_key(user_id, sort_by),
+            data,
+            ttl_seconds=WORKBENCH_OVERVIEW_CACHE_TTL_SECONDS * 4,
+        )
+    except Exception:
+        logger.warning("[研究员工作台] Redis 缓存写入失败", exc_info=True)
+
+
+async def invalidate_workbench_overview_cache(user_id: str | None = None) -> None:
+    prefixes = [f"{user_id}:"] if user_id else [""]
+    for key in list(_workbench_overview_cache.keys()):
+        if any(key.startswith(prefix) for prefix in prefixes):
+            _workbench_overview_cache.pop(key, None)
+
+    if not user_id:
+        return
+    try:
+        redis = get_container().redis.get_client()
+        for sort_by in ("today", "month"):
+            await delete_cached(redis, _workbench_overview_cache_key(user_id, sort_by))
+    except Exception:
+        logger.warning("[研究员工作台] Redis 缓存失效失败", exc_info=True)
 
 
 class ResearcherService:
@@ -121,6 +190,7 @@ class ResearcherService:
         )
         await repo.create(model)
         await session.commit()
+        await invalidate_workbench_overview_cache(user_id)
         return self._model_to_detail(model)
 
     async def async_update_researcher(
@@ -156,6 +226,7 @@ class ResearcherService:
         if updates:
             await repo.update(researcher, **updates)
             await session.commit()
+            await invalidate_workbench_overview_cache(researcher.owner_id)
         return self._model_to_detail(researcher)
 
     async def async_duplicate_researcher(
@@ -194,6 +265,7 @@ class ResearcherService:
         )
         await repo.create(duplicated)
         await session.commit()
+        await invalidate_workbench_overview_cache(owner_id)
         return self._model_to_detail(duplicated)
 
     async def async_list_mine(self, session: AsyncSession, owner_id: str) -> list[ResearcherMineItem]:
@@ -269,6 +341,7 @@ class ResearcherService:
             version=new_version,
         )
         await session.commit()
+        await invalidate_workbench_overview_cache(researcher.owner_id)
         return ResearcherPublishRecord(version=new_version, publish_time=publish_time, status="published")
 
     async def async_unpublish(self, session: AsyncSession, researcher_id: str) -> ResearcherPublishRecord:
@@ -280,6 +353,7 @@ class ResearcherService:
         publish_time = datetime.now(tz=UTC)
         await repo.update(researcher, visibility="private", publish_status="unpublished")
         await session.commit()
+        await invalidate_workbench_overview_cache(researcher.owner_id)
         return ResearcherPublishRecord(
             version=researcher.published_version or researcher.version,
             publish_time=publish_time,
@@ -324,6 +398,7 @@ class ResearcherService:
 
         await researcher_repo.update(researcher, hire_count=researcher.hire_count + 1, status="active")
         await session.commit()
+        await invalidate_workbench_overview_cache(user_id)
 
     async def async_dismiss(self, session: AsyncSession, user_id: str, researcher_id: str) -> None:
         hire_repo = ResearcherHireRepository(session)
@@ -338,6 +413,7 @@ class ResearcherService:
         if researcher and researcher.hire_count > 0:
             await researcher_repo.update(researcher, hire_count=researcher.hire_count - 1)
         await session.commit()
+        await invalidate_workbench_overview_cache(user_id)
 
     async def async_list_workbench_hired(
         self, session: AsyncSession, user_id: str
@@ -702,6 +778,10 @@ class ResearcherService:
         if cached and cached[0] > now:
             return cached[1]
 
+        redis_cached = await _load_workbench_overview_redis_cache(user_id, sort_by)
+        if redis_cached is not None:
+            return redis_cached
+
         partial_failures: list[str] = []
 
         # 三个查询共用同一个 session（单连接），无法真正并行；
@@ -729,10 +809,8 @@ class ResearcherService:
             risk_disclaimer=self._workbench_risk_disclaimer,
             partial_failures=partial_failures,
         )
-        _workbench_overview_cache[cache_key] = (
-            time.monotonic() + WORKBENCH_OVERVIEW_CACHE_TTL_SECONDS,
-            overview,
-        )
+        _set_workbench_overview_memory_cache(user_id, sort_by, overview)
+        await _save_workbench_overview_redis_cache(user_id, sort_by, overview)
         return overview
 
     @staticmethod

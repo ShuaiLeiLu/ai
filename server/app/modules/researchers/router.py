@@ -7,10 +7,13 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import TypeAdapter
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_optional_session
+from app.core.container import get_container
 from app.core.security import get_current_user_id
+from app.modules.page_cache import delete_cached, load_cached, save_cached
 from app.modules.researchers.schemas import (
     ResearcherCreateRequest,
     ResearcherDetail,
@@ -34,6 +37,62 @@ from app.schemas.common import ApiResponse, ListResponse, OperationResponse
 
 router = APIRouter(prefix="/researchers", tags=["researchers"])
 service = ResearcherService()
+_CACHE_TTL_SECONDS = 120
+_SUMMARY_LIST_ADAPTER = TypeAdapter(list[ResearcherSummary])
+_MARKET_LIST_ADAPTER = TypeAdapter(dict)
+_MARKET_DETAIL_ADAPTER = TypeAdapter(ResearcherMarketDetail)
+_MINE_LIST_ADAPTER = TypeAdapter(list[ResearcherMineItem])
+_DETAIL_ADAPTER = TypeAdapter(ResearcherDetail)
+_HIRED_LIST_ADAPTER = TypeAdapter(list[WorkbenchHiredResearcher])
+_HOT_DOCUMENTS_ADAPTER = TypeAdapter(list[WorkbenchHotDocument])
+_RANK_LIST_ADAPTER = TypeAdapter(list[WorkbenchPublicRankItem])
+
+
+async def _load_researcher_cache(name: str, adapter: TypeAdapter):
+    try:
+        redis = get_container().redis.get_client()
+        return await load_cached(redis, name, adapter)
+    except Exception:
+        return None
+
+
+async def _save_researcher_cache(name: str, data: object) -> None:
+    try:
+        redis = get_container().redis.get_client()
+        await save_cached(redis, name, data, ttl_seconds=_CACHE_TTL_SECONDS)
+    except Exception:
+        return
+
+
+async def _delete_researcher_cache(*names: str) -> None:
+    try:
+        redis = get_container().redis.get_client()
+        for name in names:
+            await delete_cached(redis, name)
+    except Exception:
+        return
+
+
+def _market_cache_name(q: str | None, page: int, page_size: int) -> str:
+    return f"researchers:market:q={(q or '').strip()}:page={page}:size={page_size}"
+
+
+def _mine_cache_name(user_id: str) -> str:
+    return f"researchers:mine:{user_id}"
+
+
+def _detail_cache_name(researcher_id: str) -> str:
+    return f"researchers:detail:{researcher_id}"
+
+
+async def _invalidate_researcher_user_cache(user_id: str | None, researcher_id: str | None = None) -> None:
+    names: list[str] = []
+    if user_id:
+        names.append(_mine_cache_name(user_id))
+    if researcher_id:
+        names.append(_detail_cache_name(researcher_id))
+        names.append(f"researchers:market-detail:{researcher_id}")
+    await _delete_researcher_cache(*names)
 
 
 def _empty_workbench_overview() -> WorkbenchOverview:
@@ -52,7 +111,13 @@ async def list_researchers(
     session: AsyncSession | None = Depends(get_optional_session),
 ) -> ApiResponse[ListResponse[ResearcherSummary]]:
     """查询所有研究员摘要。"""
-    items = await service.async_list_researchers(session) if session else []
+    if not session:
+        return ApiResponse(data=ListResponse(items=[], total=0))
+    cached = await _load_researcher_cache("researchers:list", _SUMMARY_LIST_ADAPTER)
+    if cached is not None:
+        return ApiResponse(data=ListResponse(items=cached, total=len(cached)))
+    items = await service.async_list_researchers(session)
+    await _save_researcher_cache("researchers:list", items)
     return ApiResponse(data=ListResponse(items=items, total=len(items)))
 
 
@@ -64,7 +129,16 @@ async def list_market(
     session: AsyncSession | None = Depends(get_optional_session),
 ) -> ApiResponse[ListResponse[ResearcherMarketCard]]:
     """市场研究员列表。"""
-    items, total = await service.async_list_market(session, q=q, page=page, page_size=page_size) if session else ([], 0)
+    if not session:
+        return ApiResponse(data=ListResponse(items=[], total=0))
+    cache_name = _market_cache_name(q, page, page_size)
+    cached = await _load_researcher_cache(cache_name, _MARKET_LIST_ADAPTER)
+    if isinstance(cached, dict):
+        items = TypeAdapter(list[ResearcherMarketCard]).validate_python(cached.get("items", []))
+        total = int(cached.get("total", len(items)))
+        return ApiResponse(data=ListResponse(items=items, total=total))
+    items, total = await service.async_list_market(session, q=q, page=page, page_size=page_size)
+    await _save_researcher_cache(cache_name, {"items": items, "total": total})
     return ApiResponse(data=ListResponse(items=items, total=total))
 
 
@@ -76,7 +150,13 @@ async def market_detail(
     """市场研究员详情。"""
     if not session:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="数据库不可用")
-    return ApiResponse(data=await service.async_get_market_detail(session, researcher_id))
+    cache_name = f"researchers:market-detail:{researcher_id}"
+    cached = await _load_researcher_cache(cache_name, _MARKET_DETAIL_ADAPTER)
+    if cached is not None:
+        return ApiResponse(data=cached)
+    data = await service.async_get_market_detail(session, researcher_id)
+    await _save_researcher_cache(cache_name, data)
+    return ApiResponse(data=data)
 
 
 @router.get("/mine")
@@ -85,7 +165,14 @@ async def list_mine(
     session: AsyncSession | None = Depends(get_optional_session),
 ) -> ApiResponse[ListResponse[ResearcherMineItem]]:
     """我的研究员列表。"""
-    items = await service.async_list_mine(session, user_id) if session else []
+    if not session:
+        return ApiResponse(data=ListResponse(items=[], total=0))
+    cache_name = _mine_cache_name(user_id)
+    cached = await _load_researcher_cache(cache_name, _MINE_LIST_ADAPTER)
+    if cached is not None:
+        return ApiResponse(data=ListResponse(items=cached, total=len(cached)))
+    items = await service.async_list_mine(session, user_id)
+    await _save_researcher_cache(cache_name, items)
     return ApiResponse(data=ListResponse(items=items, total=len(items)))
 
 
@@ -118,7 +205,14 @@ async def workbench_hired(
     session: AsyncSession | None = Depends(get_optional_session),
 ) -> ApiResponse[ListResponse[WorkbenchHiredResearcher]]:
     """工作台 —— 已雇佣研究员列表。"""
-    items = await service.async_list_workbench_hired(session, user_id) if session else []
+    if not session:
+        return ApiResponse(data=ListResponse(items=[], total=0))
+    cache_name = f"researchers:workbench:hired:{user_id}"
+    cached = await _load_researcher_cache(cache_name, _HIRED_LIST_ADAPTER)
+    if cached is not None:
+        return ApiResponse(data=ListResponse(items=cached, total=len(cached)))
+    items = await service.async_list_workbench_hired(session, user_id)
+    await _save_researcher_cache(cache_name, items)
     return ApiResponse(data=ListResponse(items=items, total=len(items)))
 
 
@@ -130,7 +224,11 @@ async def workbench_hot_documents(
     if not session:
         return ApiResponse(data=ListResponse(items=[], total=0))
 
+    cached = await _load_researcher_cache("researchers:workbench:hot-documents", _HOT_DOCUMENTS_ADAPTER)
+    if cached is not None:
+        return ApiResponse(data=ListResponse(items=cached, total=len(cached)))
     items = await service.async_list_workbench_hot_documents(session)
+    await _save_researcher_cache("researchers:workbench:hot-documents", items)
     return ApiResponse(data=ListResponse(items=items, total=len(items)))
 
 
@@ -140,7 +238,14 @@ async def workbench_public_rank(
     session: AsyncSession | None = Depends(get_optional_session),
 ) -> ApiResponse[ListResponse[WorkbenchPublicRankItem]]:
     """工作台 —— 公开排行榜。"""
-    items = await service.async_list_public_rankings(session, sort_by=sort_by) if session else []
+    if not session:
+        return ApiResponse(data=ListResponse(items=[], total=0))
+    cache_name = f"researchers:workbench:public-rank:{sort_by}"
+    cached = await _load_researcher_cache(cache_name, _RANK_LIST_ADAPTER)
+    if cached is not None:
+        return ApiResponse(data=ListResponse(items=cached, total=len(cached)))
+    items = await service.async_list_public_rankings(session, sort_by=sort_by)
+    await _save_researcher_cache(cache_name, items)
     return ApiResponse(data=ListResponse(items=items, total=len(items)))
 
 
@@ -164,7 +269,13 @@ async def get_researcher(
     """查询研究员详情。"""
     if not session:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="数据库不可用")
-    return ApiResponse(data=await service.async_get_researcher(session, researcher_id))
+    cache_name = _detail_cache_name(researcher_id)
+    cached = await _load_researcher_cache(cache_name, _DETAIL_ADAPTER)
+    if cached is not None:
+        return ApiResponse(data=cached)
+    data = await service.async_get_researcher(session, researcher_id)
+    await _save_researcher_cache(cache_name, data)
+    return ApiResponse(data=data)
 
 
 @router.post("")
@@ -177,6 +288,7 @@ async def create_researcher(
     if not session:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="数据库不可用")
     data = await service.async_create_researcher(session, user_id, payload)
+    await _invalidate_researcher_user_cache(user_id, data.researcher_id)
     return ApiResponse(data=data)
 
 
@@ -190,6 +302,7 @@ async def update_researcher(
     if not session:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="数据库不可用")
     data = await service.async_update_researcher(session, researcher_id, payload)
+    await _invalidate_researcher_user_cache(None, researcher_id)
     return ApiResponse(data=data)
 
 
@@ -202,7 +315,9 @@ async def duplicate_researcher(
     """复制研究员。"""
     if not session:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="数据库不可用")
-    return ApiResponse(data=await service.async_duplicate_researcher(session, researcher_id, user_id))
+    data = await service.async_duplicate_researcher(session, researcher_id, user_id)
+    await _invalidate_researcher_user_cache(user_id, data.researcher_id)
+    return ApiResponse(data=data)
 
 
 @router.post("/{researcher_id}/publish")
@@ -214,6 +329,7 @@ async def publish_researcher(
     if not session:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="数据库不可用")
     data = await service.async_publish(session, researcher_id)
+    await _invalidate_researcher_user_cache(None, researcher_id)
     return ApiResponse(data=data)
 
 
@@ -226,6 +342,7 @@ async def unpublish_researcher(
     if not session:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="数据库不可用")
     data = await service.async_unpublish(session, researcher_id)
+    await _invalidate_researcher_user_cache(None, researcher_id)
     return ApiResponse(data=data)
 
 
@@ -252,6 +369,7 @@ async def hire_researcher(
     if not session:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="数据库不可用")
     await service.async_hire(session, user_id, researcher_id)
+    await _invalidate_researcher_user_cache(user_id, researcher_id)
     return ApiResponse(data=OperationResponse(message="雇佣成功", resource_id=researcher_id))
 
 
@@ -265,6 +383,7 @@ async def dismiss_researcher(
     if not session:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="数据库不可用")
     await service.async_dismiss(session, user_id, researcher_id)
+    await _invalidate_researcher_user_cache(user_id, researcher_id)
     return ApiResponse(data=OperationResponse(message="已解雇研究员", resource_id=researcher_id))
 
 

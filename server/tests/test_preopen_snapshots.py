@@ -8,8 +8,10 @@ import pytest
 
 from app.modules.preopen import snapshots
 from app.modules.preopen import router as preopen_router
+from app.modules.preopen import skill_service as preopen_skill_service
+from app.models.preopen import PreopenAiDigest
 from app.modules.preopen.service import PreopenService
-from app.modules.preopen.schemas import AiDigest, AnomalyItem, HotNewsItem
+from app.modules.preopen.schemas import AiDigest, AnomalyItem, HotNewsItem, TrendOverview
 from app.modules.preopen.router import _load_list_or_live
 from app.modules.preopen.snapshot_cache import load_snapshot, save_snapshot
 from app.modules.preopen.snapshot_refresher import RefreshTarget, _refresh_target
@@ -39,6 +41,26 @@ class FakeRedis:
             del self.store[key]
             return 1
         return 0
+
+
+class _ScalarResult:
+    def __init__(self, value: object | None) -> None:
+        self._value = value
+
+    def scalar_one_or_none(self) -> object | None:
+        return self._value
+
+
+class _FakeSession:
+    def __init__(self, value: object | None) -> None:
+        self.value = value
+        self.flushed = False
+
+    async def execute(self, _stmt: object) -> _ScalarResult:
+        return _ScalarResult(self.value)
+
+    async def flush(self) -> None:
+        self.flushed = True
 
 
 def _hot_news_item(title: str) -> HotNewsItem:
@@ -183,52 +205,147 @@ def test_trends_builds_real_multi_day_series_from_snapshots() -> None:
 
 
 @pytest.mark.asyncio
-async def test_empty_preopen_snapshot_falls_back_to_live_fetch(
+async def test_empty_preopen_snapshot_returns_empty_without_live_fetch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    del monkeypatch
     item = _hot_news_item("实时快讯")
-
-    async def fake_run_sync(fetch: object) -> list[HotNewsItem]:
-        assert callable(fetch)
-        return [item]
-
-    monkeypatch.setattr(preopen_router, "run_sync", fake_run_sync)
 
     loaded = await _load_list_or_live(FakeRedis(), snapshots.HOT_NEWS, lambda: [item])
 
-    assert loaded == [item]
+    assert loaded == []
 
 
 @pytest.mark.asyncio
-async def test_ai_digest_endpoint_falls_back_when_llm_unavailable(
+async def test_preopen_all_reads_trends_snapshot_without_recording_market_snapshot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fallback = AiDigest(
-        digest_id="digest_fallback",
-        headline="盘前情绪中性",
-        interval_start=datetime(2026, 5, 24, 9, 0, tzinfo=UTC),
-        interval_end=datetime(2026, 5, 24, 10, 0, tzinfo=UTC),
-        generated_at=datetime(2026, 5, 24, 10, 0, tzinfo=UTC),
-        sentiment="neutral",
-        key_points=["涨停池实时回补"],
-        news_drivers=[],
-        opportunity_sectors=["半导体"],
-        risk_sectors=[],
-        intraday_watch=[],
-        simulation_plan=[],
+    redis = FakeRedis()
+    await save_snapshot(redis, snapshots.HOT_NEWS, [_hot_news_item("缓存快讯")])
+    await save_snapshot(redis, snapshots.MARKET_INDICATORS, [])
+    await save_snapshot(redis, snapshots.ANOMALIES, snapshots.empty_anomalies())
+    await save_snapshot(redis, snapshots.TRENDS, snapshots.empty_trends())
+    await save_snapshot(redis, snapshots.LIMIT_UP_LADDER, [])
+    await save_snapshot(redis, snapshots.INDUSTRY_BOARDS, [])
+    await save_snapshot(redis, snapshots.STOCK_RANK_UP, [])
+    await save_snapshot(redis, snapshots.STOCK_RANK_DOWN, [])
+
+    class FakeRedisFactory:
+        def get_client(self) -> FakeRedis:
+            return redis
+
+    monkeypatch.setattr(
+        preopen_router,
+        "get_container",
+        lambda: SimpleNamespace(redis=FakeRedisFactory()),
+    )
+
+    async def fail_async_get_trends(_session: object) -> TrendOverview:
+        raise AssertionError("page aggregate endpoint must not record live market snapshot")
+
+    monkeypatch.setattr(preopen_router.service, "async_get_trends", fail_async_get_trends)
+
+    response = await preopen_router.preopen_all(session=object())  # type: ignore[arg-type]
+
+    assert response.data.hot_news[0].title == "缓存快讯"
+    assert response.data.trends.window_days == 15
+
+
+@pytest.mark.asyncio
+async def test_ai_digest_endpoint_reads_stored_digest_without_calling_llm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stored = PreopenAiDigest(
+        id="digest_20260525_test",
+        trade_date=date(2026, 5, 25),
+        generated_at=datetime(2026, 5, 25, 8, 30, tzinfo=UTC),
+        main_thesis_md="## 一、今日核心矛盾\n科技线继续扩散。\n\n## 二、主线判断\n关注半导体。",
+        skill_outputs={
+            "main_thesis": {
+                "structured": {
+                    "core_thesis": "科技线继续扩散",
+                    "intraday_checkpoints": ["观察半导体涨停扩散"],
+                    "operation_discipline": ["不追高"],
+                }
+            }
+        },
+        falsification_signals=["半导体龙头炸板"],
+        bias="bullish",
+        tokens_used=123,
     )
 
     async def fail_llm() -> AiDigest:
-        raise RuntimeError("llm unavailable")
-
-    async def fake_run_sync(fetch: object) -> AiDigest:
-        assert callable(fetch)
-        return fallback
+        raise AssertionError("read path must not call LLM")
 
     monkeypatch.setattr(preopen_router.service, "generate_ai_digest_with_llm", fail_llm)
-    monkeypatch.setattr(preopen_router.service, "get_ai_digest", lambda: fallback)
-    monkeypatch.setattr(preopen_router, "run_sync", fake_run_sync)
 
-    response = await preopen_router.ai_digest()
+    response = await preopen_router.ai_digest(session=_FakeSession(stored))  # type: ignore[arg-type]
 
-    assert response.data == fallback
+    assert response.data.digest_id == "digest_20260525_test"
+    assert response.data.headline == "科技线继续扩散"
+    assert response.data.sentiment == "bullish"
+    assert response.data.opportunity_sectors == ["科技线继续扩散"]
+    assert response.data.risk_sectors == ["半导体龙头炸板"]
+
+
+@pytest.mark.asyncio
+async def test_run_preopen_chain_reuses_existing_digest_without_running_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stored = PreopenAiDigest(
+        id="digest_existing",
+        trade_date=date(2026, 5, 25),
+        generated_at=datetime(2026, 5, 25, 8, 30, tzinfo=UTC),
+        main_thesis_md="已生成的盘前报告",
+        skill_outputs={},
+        falsification_signals=[],
+        bias="mixed",
+        tokens_used=77,
+    )
+
+    def fail_build_orchestrator() -> object:
+        raise AssertionError("existing digest should skip orchestrator")
+
+    monkeypatch.setattr(preopen_skill_service, "_build_orchestrator", fail_build_orchestrator)
+
+    data = await preopen_skill_service.run_preopen_chain(
+        _FakeSession(stored),  # type: ignore[arg-type]
+        trade_date=date(2026, 5, 25),
+    )
+
+    assert data["digest_id"] == "digest_existing"
+    assert data["main_thesis_md"] == "已生成的盘前报告"
+    assert data["reused"] is True
+
+
+@pytest.mark.asyncio
+async def test_stream_preopen_chain_reuses_existing_digest_without_running_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stored = PreopenAiDigest(
+        id="digest_stream_existing",
+        trade_date=date(2026, 5, 25),
+        generated_at=datetime(2026, 5, 25, 8, 30, tzinfo=UTC),
+        main_thesis_md="已生成的盘前流式报告",
+        skill_outputs={},
+        falsification_signals=[],
+        bias="bullish",
+        tokens_used=88,
+    )
+
+    def fail_build_orchestrator() -> object:
+        raise AssertionError("existing digest should skip streaming orchestrator")
+
+    monkeypatch.setattr(preopen_skill_service, "_build_orchestrator", fail_build_orchestrator)
+
+    chunks = [
+        chunk
+        async for chunk in preopen_skill_service.stream_preopen_chain(
+            _FakeSession(stored),  # type: ignore[arg-type]
+            trade_date=date(2026, 5, 25),
+        )
+    ]
+
+    payload = "".join(chunks)
+    assert "digest_stream_existing" in payload
+    assert '"reused": true' in payload

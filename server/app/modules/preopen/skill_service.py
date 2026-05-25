@@ -69,9 +69,14 @@ async def run_preopen_chain(
     session: AsyncSession, trade_date: date | None = None,
 ) -> dict:
     """非流式版本:跑完返回 dict(供测试/调度任务使用)。"""
+    target_date = trade_date or date.today()
+    existing = await get_existing_preopen_digest(session, target_date)
+    if existing is not None:
+        return _digest_to_result(existing, reused=True)
+
     orch = _build_orchestrator()
     ctx = SkillContext(
-        trade_date=trade_date or date.today(),
+        trade_date=target_date,
         extra={"session": session},
     )
     outputs = await orch.run(ctx)
@@ -80,18 +85,26 @@ async def run_preopen_chain(
     await write_skill_run_logs(
         session, chain_kind="preopen", trade_date=ctx.trade_date, outputs=outputs,
     )
+    return _digest_to_result(digest, reused=False)
+
+
+async def get_existing_preopen_digest(
+    session: AsyncSession, trade_date: date,
+) -> PreopenAiDigest | None:
+    result = await session.execute(
+        select(PreopenAiDigest).where(PreopenAiDigest.trade_date == trade_date)
+    )
+    return result.scalar_one_or_none()
+
+
+def _digest_to_result(digest: PreopenAiDigest, *, reused: bool) -> dict:
     return {
-        "trade_date": ctx.trade_date.isoformat(),
+        "digest_id": digest.id,
+        "trade_date": digest.trade_date.isoformat(),
         "main_thesis_md": digest.main_thesis_md,
         "bias": digest.bias,
-        "skill_outputs": {
-            name: {
-                "success": r.success,
-                "narrative": r.narrative,
-                "structured": r.structured,
-            }
-            for name, r in outputs.items()
-        },
+        "skill_outputs": digest.skill_outputs,
+        "reused": reused,
     }
 
 
@@ -102,9 +115,23 @@ async def stream_preopen_chain(
 
     SSE 格式: `event: <type>\\ndata: <json>\\n\\n`
     """
+    target_date = trade_date or date.today()
+    existing = await get_existing_preopen_digest(session, target_date)
+    if existing is not None:
+        yield _format_sse_event(
+            "persisted",
+            {
+                "digest_id": existing.id,
+                "trade_date": existing.trade_date.isoformat(),
+                "bias": existing.bias,
+                "reused": True,
+            },
+        )
+        return
+
     orch = _build_orchestrator()
     ctx = SkillContext(
-        trade_date=trade_date or date.today(),
+        trade_date=target_date,
         extra={"session": session},
     )
     try:
@@ -129,6 +156,7 @@ async def stream_preopen_chain(
                 "digest_id": digest.id,
                 "trade_date": digest.trade_date.isoformat(),
                 "bias": digest.bias,
+                "reused": False,
             },
         )
     except Exception as exc:

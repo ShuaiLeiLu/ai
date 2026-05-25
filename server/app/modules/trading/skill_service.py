@@ -59,9 +59,16 @@ async def run_daily_review(
     account_id, researcher_name = await _resolve_account_and_researcher(
         session, researcher_id, account_id,
     )
+    target_date = trade_date or date.today()
+    existing = await get_existing_daily_review_report(
+        session, researcher_id=researcher_id, trade_date=target_date,
+    )
+    if existing is not None:
+        return _report_to_result(existing, reused=True)
+
     orch = _build_orchestrator()
     ctx = SkillContext(
-        trade_date=trade_date or date.today(),
+        trade_date=target_date,
         researcher_id=researcher_id,
         extra={
             "session": session,
@@ -77,13 +84,36 @@ async def run_daily_review(
         trade_date=ctx.trade_date, outputs=outputs,
         researcher_id=ctx.researcher_id,
     )
+    return _report_to_result(report, reused=False)
+
+
+async def get_existing_daily_review_report(
+    session: AsyncSession,
+    *,
+    researcher_id: str,
+    trade_date: date,
+) -> DailyReviewReport | None:
+    result = await session.execute(
+        select(DailyReviewReport).where(
+            DailyReviewReport.researcher_id == researcher_id,
+            DailyReviewReport.trade_date == trade_date,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+def _report_to_result(report: DailyReviewReport, *, reused: bool) -> dict:
     return {
         "report_id": report.id,
-        "trade_date": ctx.trade_date.isoformat(),
-        "researcher_id": researcher_id,
+        "trade_date": report.trade_date.isoformat(),
+        "researcher_id": report.researcher_id,
         "coach_report_md": report.coach_report_md,
         "alpha_vs_index": report.alpha_vs_index,
         "alpha_vs_sector": report.alpha_vs_sector,
+        "win_rate": report.win_rate,
+        "total_pnl": report.total_pnl,
+        "generated_at": report.generated_at,
+        "reused": reused,
     }
 
 
@@ -99,9 +129,25 @@ async def stream_daily_review(
     account_id, researcher_name = await _resolve_account_and_researcher(
         session, researcher_id, account_id,
     )
+    target_date = trade_date or date.today()
+    existing = await get_existing_daily_review_report(
+        session, researcher_id=researcher_id, trade_date=target_date,
+    )
+    if existing is not None:
+        yield _format_sse_event(
+            "persisted",
+            {
+                "report_id": existing.id,
+                "trade_date": existing.trade_date.isoformat(),
+                "alpha_vs_index": existing.alpha_vs_index,
+                "reused": True,
+            },
+        )
+        return
+
     orch = _build_orchestrator()
     ctx = SkillContext(
-        trade_date=trade_date or date.today(),
+        trade_date=target_date,
         researcher_id=researcher_id,
         extra={
             "session": session,
@@ -132,6 +178,7 @@ async def stream_daily_review(
                 "report_id": report.id,
                 "trade_date": report.trade_date.isoformat(),
                 "alpha_vs_index": report.alpha_vs_index,
+                "reused": False,
             },
         )
     except Exception as exc:

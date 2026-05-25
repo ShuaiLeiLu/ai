@@ -5,13 +5,41 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.modules.page_cache import save_cached
 from app.modules.researchers.schemas import (
     ResearcherDetail,
     WorkbenchHiredResearcher,
     WorkbenchHotDocument,
+    WorkbenchOverview,
     WorkbenchPublicRankItem,
+    WorkbenchQuickAction,
 )
 from app.modules.researchers.service import ResearcherService, _workbench_overview_cache
+
+
+class FakeRedis:
+    def __init__(self) -> None:
+        self.store: dict[str, str] = {}
+
+    async def get(self, key: str) -> str | None:
+        return self.store.get(key)
+
+    async def set(self, key: str, value: str, *, ex: int | None = None, nx: bool = False) -> bool:
+        self.store[key] = value
+        return True
+
+    async def delete(self, key: str) -> int:
+        existed = key in self.store
+        self.store.pop(key, None)
+        return int(existed)
+
+
+class FakeRedisFactory:
+    def __init__(self, redis: FakeRedis) -> None:
+        self._redis = redis
+
+    def get_client(self) -> FakeRedis:
+        return self._redis
 
 
 @pytest.mark.asyncio
@@ -76,6 +104,45 @@ async def test_async_get_workbench_overview_combines_main_entry_sections(
     assert [item.total_asset for item in overview.rankings] == [1_008_000.0]
     assert overview.risk_disclaimer
     assert overview.partial_failures == []
+
+
+@pytest.mark.asyncio
+async def test_async_get_workbench_overview_reads_redis_snapshot_before_database(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _workbench_overview_cache.clear()
+    redis = FakeRedis()
+    service = ResearcherService()
+    cached = WorkbenchOverview(
+        hired=[],
+        hot_documents=[],
+        rankings=[],
+        quick_actions=[
+            WorkbenchQuickAction(
+                action_key="cached",
+                title="缓存动作",
+                description="来自 Redis",
+            )
+        ],
+        risk_disclaimer="cached risk",
+        partial_failures=[],
+    )
+    await save_cached(redis, "researchers:workbench:overview:u_demo:today", cached, ttl_seconds=120)
+
+    monkeypatch.setattr(
+        "app.modules.researchers.service.get_container",
+        lambda: SimpleNamespace(redis=FakeRedisFactory(redis)),
+    )
+
+    async def fail_hired(*_args: object, **_kwargs: object) -> list[WorkbenchHiredResearcher]:
+        raise AssertionError("Redis hit must not query hired researchers")
+
+    monkeypatch.setattr(service, "async_list_workbench_hired", fail_hired)
+
+    overview = await service.async_get_workbench_overview(object(), "u_demo", sort_by="today")  # type: ignore[arg-type]
+
+    assert overview.risk_disclaimer == "cached risk"
+    assert overview.quick_actions[0].action_key == "cached"
 
 
 @pytest.mark.asyncio

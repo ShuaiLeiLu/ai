@@ -28,7 +28,7 @@ class TradingAccount(SchemaModel):
     total_asset: float       # 总资产
     available_cash: float    # 可用资金
     holding_value: float     # 持仓市值
-    daily_pnl: float         # 近日盈亏：当前权益 - 上一个资金曲线节点
+    daily_pnl: float         # 当日盈亏：已实现当日盈亏 + 持仓相对昨收浮动盈亏
     total_pnl: float = 0.0   # 累计盈亏：当前权益 - 初始资金
     total_return: float = 0.0  # 累计收益率
 
@@ -83,6 +83,20 @@ class TradeLogItem(SchemaModel):
 class GenerateTradeReflectionResponse(SchemaModel):
     """手动生成 AI 交易复盘结果。"""
     log: TradeLogItem
+
+
+class DailyReviewResponse(SchemaModel):
+    """已生成的盘后教练复盘报告。"""
+    report_id: str
+    trade_date: str
+    researcher_id: str
+    coach_report_md: str
+    alpha_vs_index: float
+    alpha_vs_sector: float
+    win_rate: float = 0.0
+    total_pnl: float = 0.0
+    generated_at: datetime
+    reused: bool = True
 
 
 class EquityPoint(SchemaModel):

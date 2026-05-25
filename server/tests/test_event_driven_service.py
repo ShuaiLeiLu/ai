@@ -108,6 +108,39 @@ def test_empty_market_sources_do_not_fall_back_to_mock(monkeypatch: pytest.Monke
     assert detail is None
 
 
+def test_event_driven_page_reads_cached_snapshot_without_live_fetch(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = EventDrivenService()
+    service.set_cached_market_snapshot(_snapshot())
+
+    def fail_live_snapshot() -> MarketSnapshot:
+        raise AssertionError("page read path must not load external market snapshot")
+
+    monkeypatch.setattr(event_service, "_load_market_snapshot", fail_live_snapshot)
+
+    themes = service.list_themes()
+    detail = service.get_theme("semiconductor")
+    they_say = service.they_say()
+
+    assert themes[0].id == "semiconductor"
+    assert detail is not None
+    assert detail.limit_up_count == 2
+    assert they_say.summary.startswith("当日涨停 4 家")
+
+
+def test_event_driven_service_restores_cached_snapshot_from_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = EventDrivenService(cache_only=True)
+    service.set_cached_market_snapshot_payload(_snapshot().to_cache_payload())
+
+    def fail_live_snapshot() -> MarketSnapshot:
+        raise AssertionError("cache-only service must not load external market snapshot")
+
+    monkeypatch.setattr(event_service, "_load_market_snapshot", fail_live_snapshot)
+
+    themes = service.list_themes()
+
+    assert themes[0].id == "semiconductor"
+
+
 def test_unmatched_theme_is_not_returned(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(event_service, "_load_market_snapshot", _snapshot)
 

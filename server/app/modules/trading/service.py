@@ -165,14 +165,15 @@ class TradingService:
         *,
         total_asset: float,
         initial_capital: float,
-        replay: _ReplaySnapshot | None,
+        replay: _ReplaySnapshot | object | None,
     ) -> float:
-        """用资金曲线推导近日盈亏，避免直接暴露策略运行过程中的临时 daily_pnl。"""
-        if replay and replay.daily_equity:
+        """Derive recent PnL from the account equity curve for ranking views."""
+        daily_equity = getattr(replay, "daily_equity", None)
+        if isinstance(daily_equity, dict) and daily_equity:
             today_str = datetime.now().date().strftime("%Y-%m-%d")
-            previous_dates = [date for date in replay.daily_equity if date < today_str]
+            previous_dates = [date_text for date_text in daily_equity if str(date_text) < today_str]
             if previous_dates:
-                base_equity = float(replay.daily_equity[max(previous_dates)])
+                base_equity = float(daily_equity[max(previous_dates)])
                 return round(total_asset - base_equity, 2)
             return round(total_asset - initial_capital, 2)
         return round(total_asset - initial_capital, 2)
@@ -192,11 +193,7 @@ class TradingService:
             total_asset=total_asset,
             available_cash=round(float(getattr(acc, "available_cash", 0.0)), 2),
             holding_value=round(float(getattr(acc, "holding_value", 0.0)), 2),
-            daily_pnl=self._derive_recent_pnl(
-                total_asset=total_asset,
-                initial_capital=initial_capital,
-                replay=replay,
-            ),
+            daily_pnl=round(float(getattr(acc, "daily_pnl", 0.0)), 2),
             total_pnl=total_pnl,
             total_return=round(total_pnl / initial_capital, 4) if initial_capital > 0 else 0.0,
         )

@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import TypeAdapter
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_optional_session
+from app.core.container import get_container
 from app.core.security import get_current_user_id, get_optional_current_user_id
 from app.modules.community.schemas import (
     CommunityComment,
@@ -17,11 +19,59 @@ from app.modules.community.schemas import (
     CommunityPostDetail,
 )
 from app.modules.community.service import CommunityService
+from app.modules.page_cache import delete_cached, load_cached, save_cached
 from app.schemas.common import ApiResponse, ListResponse, OperationResponse
 
 router = APIRouter(prefix="/community", tags=["community"])
 legacy_router = APIRouter(prefix="/ai-community", tags=["ai-community"])
 service = CommunityService()
+_CACHE_TTL_SECONDS = 60
+_POSTS_ADAPTER = TypeAdapter(list[CommunityPost])
+_POST_DETAIL_ADAPTER = TypeAdapter(CommunityPostDetail)
+_COMMENTS_ADAPTER = TypeAdapter(list[CommunityComment])
+_MENTION_CONFIG_ADAPTER = TypeAdapter(CommunityMentionConfig)
+
+
+def _posts_cache_name(q: str | None, scope: str, sort: str, user_id: str | None) -> str:
+    return f"community:posts:q={(q or '').strip()}:scope={scope}:sort={sort}:user={user_id or 'anonymous'}"
+
+
+def _post_detail_cache_name(post_id: str) -> str:
+    return f"community:post:{post_id}"
+
+
+def _comments_cache_name(post_id: str) -> str:
+    return f"community:comments:{post_id}"
+
+
+def _mention_config_cache_name(user_id: str | None) -> str:
+    return f"community:mention-config:{user_id or 'anonymous'}"
+
+
+async def _load_community_cache(name: str, adapter: TypeAdapter):
+    try:
+        redis = get_container().redis.get_client()
+        return await load_cached(redis, name, adapter)
+    except Exception:
+        return None
+
+
+async def _save_community_cache(name: str, data: object) -> None:
+    try:
+        redis = get_container().redis.get_client()
+        await save_cached(redis, name, data, ttl_seconds=_CACHE_TTL_SECONDS)
+    except Exception:
+        return
+
+
+async def _invalidate_post_cache(post_id: str | None = None) -> None:
+    try:
+        redis = get_container().redis.get_client()
+        if post_id:
+            await delete_cached(redis, _post_detail_cache_name(post_id))
+            await delete_cached(redis, _comments_cache_name(post_id))
+    except Exception:
+        return
 
 
 @router.get("/posts")
@@ -33,11 +83,18 @@ async def list_posts(
     session: AsyncSession | None = Depends(get_optional_session),
 ) -> ApiResponse[ListResponse[CommunityPost]]:
     """帖子列表。"""
+    cache_name = _posts_cache_name(q, scope, sort, user_id)
+    if session:
+        cached = await _load_community_cache(cache_name, _POSTS_ADAPTER)
+        if cached is not None:
+            return ApiResponse(data=ListResponse(items=cached, total=len(cached)))
     items = (
         await service.async_list_posts(session, q=q, scope=scope, sort=sort, user_id=user_id)
         if session
         else service.sample_posts(q=q, scope=scope, sort=sort, user_id=user_id)
     )
+    if session:
+        await _save_community_cache(cache_name, items)
     return ApiResponse(data=ListResponse(items=items, total=len(items)))
 
 
@@ -49,7 +106,12 @@ async def get_post(
     """帖子详情"""
     if not session:
         return ApiResponse(data=service.sample_post_detail(post_id))
+    cache_name = _post_detail_cache_name(post_id)
+    cached = await _load_community_cache(cache_name, _POST_DETAIL_ADAPTER)
+    if cached is not None:
+        return ApiResponse(data=cached)
     data = await service.async_get_post(session, post_id)
+    await _save_community_cache(cache_name, data)
     return ApiResponse(data=data)
 
 
@@ -63,6 +125,7 @@ async def create_post(
     if not session:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="数据库不可用")
     data = await service.async_create_post(session, user_id, payload)
+    await _invalidate_post_cache(data.post_id)
     return ApiResponse(data=data)
 
 
@@ -73,11 +136,18 @@ async def _list_posts_response(
     user_id: str | None,
     session: AsyncSession | None,
 ) -> ApiResponse[ListResponse[CommunityPost]]:
+    cache_name = _posts_cache_name(q, scope, sort, user_id)
+    if session:
+        cached = await _load_community_cache(cache_name, _POSTS_ADAPTER)
+        if cached is not None:
+            return ApiResponse(data=ListResponse(items=cached, total=len(cached)))
     items = (
         await service.async_list_posts(session, q=q, scope=scope, sort=sort, user_id=user_id)
         if session
         else service.sample_posts(q=q, scope=scope, sort=sort, user_id=user_id)
     )
+    if session:
+        await _save_community_cache(cache_name, items)
     return ApiResponse(data=ListResponse(items=items, total=len(items)))
 
 
@@ -89,6 +159,7 @@ async def _create_post_response(
     if not session:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="数据库不可用")
     data = await service.async_create_post(session, user_id, payload)
+    await _invalidate_post_cache(data.post_id)
     return ApiResponse(data=data)
 
 
@@ -124,7 +195,12 @@ async def legacy_get_post(
     """帖子详情。"""
     if not session:
         return ApiResponse(data=service.sample_post_detail(post_id))
+    cache_name = _post_detail_cache_name(post_id)
+    cached = await _load_community_cache(cache_name, _POST_DETAIL_ADAPTER)
+    if cached is not None:
+        return ApiResponse(data=cached)
     data = await service.async_get_post(session, post_id)
+    await _save_community_cache(cache_name, data)
     return ApiResponse(data=data)
 
 
@@ -147,7 +223,12 @@ async def legacy_list_comments(
     if not session:
         items = service.sample_comments(post_id)
         return ApiResponse(data=ListResponse(items=items, total=len(items)))
+    cache_name = _comments_cache_name(post_id)
+    cached = await _load_community_cache(cache_name, _COMMENTS_ADAPTER)
+    if cached is not None:
+        return ApiResponse(data=ListResponse(items=cached, total=len(cached)))
     items = await service.async_list_comments(session, post_id)
+    await _save_community_cache(cache_name, items)
     return ApiResponse(data=ListResponse(items=items, total=len(items)))
 
 
@@ -167,6 +248,7 @@ async def legacy_create_comment(
     if not session:
         return ApiResponse(data=service.create_sample_comment(payload, user_id=user_id))
     data = await service.async_create_comment(session, user_id or "anonymous", payload)
+    await _invalidate_post_cache(payload.post_id)
     return ApiResponse(data=data)
 
 
@@ -181,6 +263,7 @@ async def legacy_set_featured(
     if not session:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="数据库不可用")
     data = await service.async_set_featured(session, post_id, user_id, payload)
+    await _invalidate_post_cache(post_id)
     return ApiResponse(data=data)
 
 
@@ -195,6 +278,7 @@ async def legacy_delete_post(
     if not session:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="数据库不可用")
     await service.async_delete_post(session, post_id, user_id, payload)
+    await _invalidate_post_cache(post_id)
     return ApiResponse(data=OperationResponse(message="删除成功", resource_id=post_id))
 
 
@@ -220,5 +304,10 @@ async def legacy_mention_config(
     """可 @ 的已雇佣研究员配置。"""
     if not session or not user_id:
         return ApiResponse(data=service.sample_mention_config())
+    cache_name = _mention_config_cache_name(user_id)
+    cached = await _load_community_cache(cache_name, _MENTION_CONFIG_ADAPTER)
+    if cached is not None:
+        return ApiResponse(data=cached)
     data = await service.async_get_mention_config(session, user_id)
+    await _save_community_cache(cache_name, data)
     return ApiResponse(data=data)

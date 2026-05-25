@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from collections import Counter
 from dataclasses import dataclass
+from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -123,6 +124,28 @@ class MarketSnapshot:
     boards: list[IndustryBoard]
     news: list[LiveNewsItem]
     generated_at: datetime
+
+    def to_cache_payload(self) -> dict:
+        return {
+            "pool": [asdict(item) for item in self.pool],
+            "boards": [asdict(item) for item in self.boards],
+            "news": [asdict(item) for item in self.news],
+            "generated_at": self.generated_at.isoformat(),
+        }
+
+    @classmethod
+    def from_cache_payload(cls, payload: dict) -> MarketSnapshot:
+        generated_at = payload.get("generated_at")
+        if isinstance(generated_at, str):
+            generated_at = datetime.fromisoformat(generated_at)
+        if not isinstance(generated_at, datetime):
+            generated_at = datetime.now(timezone.utc)
+        return cls(
+            pool=[LimitUpStock(**item) for item in payload.get("pool", [])],
+            boards=[IndustryBoard(**item) for item in payload.get("boards", [])],
+            news=[LiveNewsItem(**item) for item in payload.get("news", [])],
+            generated_at=generated_at,
+        )
 
 
 def _theme_terms(theme: ThemeListItem) -> list[str]:
@@ -543,21 +566,43 @@ class EventDrivenService:
 
     unlock_cost = 200
 
-    def list_themes(self) -> list[ThemeListItem]:
+    def __init__(self, *, cache_only: bool = False) -> None:
+        self._cache_only = cache_only
+        self._cached_market_snapshot: MarketSnapshot | None = None
+
+    def set_cached_market_snapshot(self, snapshot: MarketSnapshot) -> None:
+        self._cached_market_snapshot = snapshot
+
+    def set_cached_market_snapshot_payload(self, payload: dict) -> None:
+        self.set_cached_market_snapshot(MarketSnapshot.from_cache_payload(payload))
+
+    def refresh_cached_market_snapshot(self) -> MarketSnapshot:
         snapshot = _load_market_snapshot()
+        self.set_cached_market_snapshot(snapshot)
+        return snapshot
+
+    def _market_snapshot(self) -> MarketSnapshot:
+        if self._cached_market_snapshot is not None:
+            return self._cached_market_snapshot
+        if not self._cache_only:
+            return _load_market_snapshot()
+        return MarketSnapshot(pool=[], boards=[], news=[], generated_at=datetime.now(timezone.utc))
+
+    def list_themes(self) -> list[ThemeListItem]:
+        snapshot = self._market_snapshot()
         return _market_themes(snapshot)
 
     def get_theme(self, theme_id: str) -> ThemeDetail | None:
         for theme in THEMES:
             if theme.id == theme_id:
-                snapshot = _load_market_snapshot()
+                snapshot = self._market_snapshot()
                 if not _theme_has_market_signal(theme, snapshot):
                     return None
                 return _detail_from_market(theme, snapshot)
         return None
 
     def they_say(self) -> TheySayBoard:
-        snapshot = _load_market_snapshot()
+        snapshot = self._market_snapshot()
         if snapshot.pool or snapshot.boards:
             return _build_they_say_from_market(snapshot)
         return TheySayBoard(

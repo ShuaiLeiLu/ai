@@ -285,6 +285,26 @@ async def _refresh_trading_quotes(db: DatabaseFactory, redis_factory: RedisFacto
         logger.exception("[调度器] 行情缓存刷新异常")
 
 
+async def _refresh_page_data_caches() -> None:
+    """Refresh page-facing caches that should not block user requests."""
+    try:
+        from app.modules.news_analysis.router import refresh_ai_panels_cache, refresh_news_analysis_cache
+
+        await refresh_news_analysis_cache()
+        await refresh_ai_panels_cache()
+        logger.info("[调度器] 资讯分析缓存刷新完成")
+    except Exception:
+        logger.exception("[调度器] 资讯分析缓存刷新异常")
+
+    try:
+        from app.modules.event_driven.router import refresh_event_driven_cache
+
+        await refresh_event_driven_cache()
+        logger.info("[调度器] 题材掘金缓存刷新完成")
+    except Exception:
+        logger.exception("[调度器] 题材掘金缓存刷新异常")
+
+
 async def _settle_pending_orders_job(db: DatabaseFactory) -> None:
     """每 30 秒在交易时段扫描挂单池,把可成交的限价单撮合掉。"""
     if not _is_trading_hours():
@@ -667,6 +687,24 @@ def start_scheduler(db: DatabaseFactory, redis: RedisFactory | None = None) -> A
             id="apply_corporate_actions",
             name="除权除息自动调仓",
             replace_existing=True,
+        )
+        _scheduler.add_job(
+            _refresh_page_data_caches,
+            trigger=IntervalTrigger(seconds=60, timezone="Asia/Shanghai"),
+            id="refresh_page_data_caches",
+            name="刷新页面数据缓存",
+            replace_existing=True,
+            max_instances=1,
+            coalesce=True,
+        )
+        _scheduler.add_job(
+            _refresh_page_data_caches,
+            trigger="date",
+            run_date=_now_shanghai() + timedelta(seconds=12),
+            id="initial_page_data_cache_refresh",
+            name="启动后首次刷新页面数据缓存",
+            replace_existing=True,
+            max_instances=1,
         )
 
         from app.modules.preopen.snapshot_refresher import PREOPEN_REFRESH_GROUPS, refresh_preopen_group

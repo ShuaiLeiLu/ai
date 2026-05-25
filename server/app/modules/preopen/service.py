@@ -34,6 +34,7 @@ from app.integrations.akshare.client import (
     run_sync,
 )
 from app.integrations.llm.client import LLMMessage, get_llm_client
+from app.models.preopen import PreopenAiDigest, PreopenMarketSnapshot
 from app.modules.preopen.schemas import (
     AiDigest,
     AiDigestSection,
@@ -49,13 +50,95 @@ from app.modules.preopen.schemas import (
     TrendPoint,
     TrendSeries,
 )
-from app.models.preopen import PreopenMarketSnapshot
 
 logger = logging.getLogger(__name__)
 
 # LLM 结果缓存（5 分钟）
 _llm_digest_cache: dict[str, Any] = {"data": None, "expires_at": 0.0}
 _LLM_CACHE_TTL = 300  # 5 分钟
+
+
+def ai_digest_from_persisted(row: PreopenAiDigest) -> AiDigest:
+    """Convert the daily persisted skill-chain digest into the public card schema."""
+    main_struct = (
+        row.skill_outputs.get("main_thesis", {}) if row.skill_outputs else {}
+    ).get("structured", {})
+    if not isinstance(main_struct, dict):
+        main_struct = {}
+    core_thesis = str(main_struct.get("core_thesis") or "").strip()
+    headline = core_thesis or _first_markdown_text(row.main_thesis_md) or "盘前 AI 解读已生成"
+    key_points = _markdown_bullets(row.main_thesis_md)
+    if not key_points:
+        key_points = [headline]
+    sentiment = {
+        "bullish": "bullish",
+        "bearish": "bearish",
+        "retreat": "bearish",
+    }.get((row.bias or "").lower(), "neutral")
+    return AiDigest(
+        digest_id=row.id,
+        report_title=_digest_report_title(row.trade_date),
+        headline=headline,
+        interval_start=row.generated_at,
+        interval_end=row.generated_at,
+        generated_at=row.generated_at,
+        sentiment=sentiment,
+        key_points=key_points[:5],
+        report_sections=_sections_from_markdown(row.main_thesis_md),
+        news_drivers=[],
+        opportunity_sectors=[core_thesis] if core_thesis else [],
+        risk_sectors=list(row.falsification_signals or []),
+        intraday_watch=list(main_struct.get("intraday_checkpoints") or []),
+        simulation_plan=list(main_struct.get("operation_discipline") or []),
+    )
+
+
+def _first_markdown_text(markdown: str) -> str:
+    for raw in markdown.splitlines():
+        line = raw.strip().lstrip("#").strip()
+        if line and not line.startswith("```"):
+            return line
+    return ""
+
+
+def _markdown_bullets(markdown: str) -> list[str]:
+    bullets: list[str] = []
+    for raw in markdown.splitlines():
+        line = raw.strip()
+        if line.startswith(("- ", "* ")):
+            item = line[2:].strip()
+            if item:
+                bullets.append(item)
+    return bullets
+
+
+def _sections_from_markdown(markdown: str) -> list[AiDigestSection]:
+    sections: list[AiDigestSection] = []
+    current_title = ""
+    current_lines: list[str] = []
+
+    def flush() -> None:
+        nonlocal current_title, current_lines
+        if not current_title:
+            return
+        paragraphs = [line for line in current_lines if line and not line.startswith(("- ", "* "))]
+        bullets = [line[2:].strip() for line in current_lines if line.startswith(("- ", "* "))]
+        sections.append(AiDigestSection(title=current_title, paragraphs=paragraphs, bullets=bullets))
+        current_lines = []
+
+    for raw in markdown.splitlines():
+        line = raw.strip()
+        if line.startswith("## "):
+            flush()
+            current_title = line.lstrip("#").strip()
+            current_lines = []
+            continue
+        if line:
+            current_lines.append(line)
+    flush()
+    if sections:
+        return sections
+    return [AiDigestSection(title="盘前 AI 解读", paragraphs=[markdown.strip()])] if markdown.strip() else []
 
 
 def _digest_report_title(calendar_trade_date: date) -> str:

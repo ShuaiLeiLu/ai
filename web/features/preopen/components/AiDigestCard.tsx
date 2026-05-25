@@ -6,7 +6,7 @@
  *   - 思源宋体大字摘要叙事，关键词用金色 mark 高亮
  *   - 底部标签 chip 阵列展示驱动板块
  *
- * 数据流：useAiDigestQuery → 后端 /preopen/ai-digest
+ * 数据流：useAiDigestQuery → 后端 /preopen/ai-digest 读取已生成结果
  */
 'use client';
 
@@ -91,7 +91,7 @@ export function AiDigestCard() {
   const isPreview = !data && !loading;
   const metaLine = data
     ? `研判官 v3 · ${new Date(data.generated_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 更新`
-    : '研判官 v3.2 · 待生成 · 引用 21 个数据源';
+    : '研判官 v3.2 · 等待调度生成 · 引用已落库数据';
 
   return (
     <PageCard
@@ -106,7 +106,7 @@ export function AiDigestCard() {
           loading={loading}
           onClick={handleRequestDigest}
         >
-          {data ? '重新生成' : 'AI 解读'}
+          {data ? '刷新' : 'AI 解读'}
         </Button>
       }
       className="relative overflow-hidden"
@@ -127,7 +127,7 @@ export function AiDigestCard() {
         )}
 
         {error && !loading && (
-          <Alert message="AI 解读生成失败" description={error.message} type="error" showIcon />
+          <Alert message="AI 解读加载失败" description={error.message} type="error" showIcon />
         )}
 
         {!loading && !error && (
@@ -203,7 +203,7 @@ export function AiDigestCard() {
 
             {isPreview && (
               <div className="mt-4 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-[11.5px] text-ink-0/55">
-                以上为示例预览 · 点击右上「AI 解读」基于今日实时数据生成研判
+                以上为示例预览 · 点击右上「AI 解读」读取今日已生成研判
               </div>
             )}
           </>

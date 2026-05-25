@@ -59,14 +59,14 @@ async def test_async_get_portfolio_uses_account_snapshot(monkeypatch: pytest.Mon
     assert data.account.total_asset == 998000.0
     assert data.account.available_cash == 120000.0
     assert data.account.holding_value == 878000.0
-    assert data.account.daily_pnl == -1500.0
+    assert data.account.daily_pnl == 3200.0
     assert data.account.total_pnl == -2000.0
     assert data.account.total_return == -0.002
     assert data.positions == []
 
 
 @pytest.mark.asyncio
-async def test_async_get_account_ignores_stale_raw_daily_pnl(
+async def test_async_get_account_uses_persisted_daily_pnl(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = TradingService()
@@ -95,9 +95,44 @@ async def test_async_get_account_ignores_stale_raw_daily_pnl(
 
     data = await service.async_get_account(SimpleNamespace(), "u_recent", "r_recent")
 
-    assert data.daily_pnl == -13863.0
+    assert data.daily_pnl == 1750.0
     assert data.total_pnl == -14968.68
     assert data.total_return == -0.015
+
+
+@pytest.mark.asyncio
+async def test_async_get_account_uses_current_snapshot_daily_pnl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = TradingService()
+    account = SimpleNamespace(
+        id="acct_current_daily_pnl_test",
+        total_asset=1_250_982.58,
+        available_cash=10_105.58,
+        holding_value=1_240_877.0,
+        daily_pnl=-19_130.0,
+    )
+
+    async def fake_resolve_account_model(*_args: object, **_kwargs: object) -> object:
+        return account
+
+    async def fake_load_replay(*_args: object, **_kwargs: object) -> tuple[list[object], object]:
+        replay = SimpleNamespace(
+            daily_equity={"2026-05-21": 1_201_536.91},
+            sell_pnls=[],
+            hold_days=[],
+            record_map={},
+        )
+        return [], replay
+
+    monkeypatch.setattr(service, "_resolve_account_model", fake_resolve_account_model)
+    monkeypatch.setattr(service, "_load_replay", fake_load_replay)
+
+    data = await service.async_get_account(SimpleNamespace(), "u_current", "r_current")
+
+    assert data.daily_pnl == -19_130.0
+    assert data.total_pnl == 250_982.58
+    assert data.total_return == 0.251
 
 
 @pytest.mark.asyncio

@@ -11,13 +11,19 @@
 """
 from __future__ import annotations
 
+from datetime import date
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
+from pydantic import TypeAdapter
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import db_session_dependency, get_optional_session
+from app.core.container import get_container
 from app.core.security import get_current_user_id
+from app.modules.page_cache import delete_cached, load_cached, save_cached
 from app.modules.trading.schemas import (
+    DailyReviewResponse,
     GenerateTradeReflectionResponse,
     PlaceOrderRequest,
     PlaceOrderResponse,
@@ -31,13 +37,62 @@ from app.modules.trading.schemas import (
 )
 from app.modules.trading.service import TradingService
 from app.modules.trading.skill_service import (
-    run_daily_review,
+    get_existing_daily_review_report,
     stream_daily_review,
 )
 from app.schemas.common import ApiResponse, ListResponse
 
 router = APIRouter(prefix="/trading", tags=["trading"])
 service = TradingService()
+_CACHE_TTL_SECONDS = 45
+_ALL_ADAPTER = TypeAdapter(TradingAllData)
+_PORTFOLIO_ADAPTER = TypeAdapter(TradingPortfolioData)
+_ACCOUNT_ADAPTER = TypeAdapter(TradingAccount)
+_POSITIONS_ADAPTER = TypeAdapter(list[PositionItem])
+_RECORDS_ADAPTER = TypeAdapter(list[TradeRecord])
+_LOGS_ADAPTER = TypeAdapter(list[TradeLogItem])
+_STATS_ADAPTER = TypeAdapter(TradingStats)
+
+
+async def _load_trading_cache(name: str, adapter: TypeAdapter):
+    try:
+        redis = get_container().redis.get_client()
+        return await load_cached(redis, name, adapter)
+    except Exception:
+        return None
+
+
+async def _save_trading_cache(name: str, data: object) -> None:
+    try:
+        redis = get_container().redis.get_client()
+        await save_cached(redis, name, data, ttl_seconds=_CACHE_TTL_SECONDS)
+    except Exception:
+        return
+
+
+async def _delete_trading_cache(*names: str) -> None:
+    try:
+        redis = get_container().redis.get_client()
+        for name in names:
+            await delete_cached(redis, name)
+    except Exception:
+        return
+
+
+def _trading_cache_name(section: str, user_id: str, researcher_id: str, suffix: str = "") -> str:
+    return f"trading:{section}:{user_id}:{researcher_id}{suffix}"
+
+
+async def _invalidate_trading_page_cache(user_id: str, researcher_id: str) -> None:
+    await _delete_trading_cache(
+        _trading_cache_name("all", user_id, researcher_id),
+        _trading_cache_name("portfolio", user_id, researcher_id),
+        _trading_cache_name("account", user_id, researcher_id),
+        _trading_cache_name("positions", user_id, researcher_id),
+        _trading_cache_name("records", user_id, researcher_id, ":limit=20"),
+        _trading_cache_name("logs", user_id, researcher_id),
+        _trading_cache_name("stats", user_id, researcher_id),
+    )
 
 
 async def _resolve_researcher_id(
@@ -126,7 +181,12 @@ async def trading_all(
     """
     if not session or not researcher_id:
         return ApiResponse(data=_empty_all_data())
+    cache_name = _trading_cache_name("all", user_id, researcher_id)
+    cached = await _load_trading_cache(cache_name, _ALL_ADAPTER)
+    if cached is not None:
+        return ApiResponse(data=cached)
     data = await service.async_get_all(session, user_id, researcher_id)
+    await _save_trading_cache(cache_name, data)
     return ApiResponse(data=data)
 
 
@@ -139,7 +199,12 @@ async def trading_portfolio(
     """模拟盘轻量组合接口 —— 只返回 account + positions。"""
     if not session or not researcher_id:
         return ApiResponse(data=_empty_portfolio_data())
+    cache_name = _trading_cache_name("portfolio", user_id, researcher_id)
+    cached = await _load_trading_cache(cache_name, _PORTFOLIO_ADAPTER)
+    if cached is not None:
+        return ApiResponse(data=cached)
     data = await service.async_get_portfolio(session, user_id, researcher_id)
+    await _save_trading_cache(cache_name, data)
     return ApiResponse(data=data)
 
 
@@ -155,7 +220,12 @@ async def account(
     researcher_id = await _resolve_researcher_id(session, user_id, researcher_id)
     if not researcher_id:
         return ApiResponse(data=_empty_account())
+    cache_name = _trading_cache_name("account", user_id, researcher_id)
+    cached = await _load_trading_cache(cache_name, _ACCOUNT_ADAPTER)
+    if cached is not None:
+        return ApiResponse(data=cached)
     data = await service.async_get_account(session, user_id, researcher_id)
+    await _save_trading_cache(cache_name, data)
     return ApiResponse(data=data)
 
 
@@ -171,8 +241,13 @@ async def positions(
     researcher_id = await _resolve_researcher_id(session, user_id, researcher_id)
     if not researcher_id:
         return ApiResponse(data=ListResponse(items=[], total=0))
+    cache_name = _trading_cache_name("positions", user_id, researcher_id)
+    cached = await _load_trading_cache(cache_name, _POSITIONS_ADAPTER)
+    if cached is not None:
+        return ApiResponse(data=ListResponse(items=cached, total=len(cached)))
     account_id = await service.async_resolve_account_id(session, user_id, researcher_id)
     items = await service.async_list_positions(session, account_id)
+    await _save_trading_cache(cache_name, items)
     return ApiResponse(data=ListResponse(items=items, total=len(items)))
 
 
@@ -189,8 +264,13 @@ async def records(
     researcher_id = await _resolve_researcher_id(session, user_id, researcher_id)
     if not researcher_id:
         return ApiResponse(data=ListResponse(items=[], total=0))
+    cache_name = _trading_cache_name("records", user_id, researcher_id, f":limit={limit}")
+    cached = await _load_trading_cache(cache_name, _RECORDS_ADAPTER)
+    if cached is not None:
+        return ApiResponse(data=ListResponse(items=cached, total=len(cached)))
     account_id = await service.async_resolve_account_id(session, user_id, researcher_id)
     items = await service.async_list_records(session, account_id, limit=limit)
+    await _save_trading_cache(cache_name, items)
     return ApiResponse(data=ListResponse(items=items, total=len(items)))
 
 
@@ -203,8 +283,13 @@ async def list_trade_logs(
     """获取交易日志（trade 表格 + analysis 富文本）"""
     if not session or not researcher_id:
         return ApiResponse(data=ListResponse(items=[], total=0))
+    cache_name = _trading_cache_name("logs", user_id, researcher_id)
+    cached = await _load_trading_cache(cache_name, _LOGS_ADAPTER)
+    if cached is not None:
+        return ApiResponse(data=ListResponse(items=cached, total=len(cached)))
     account_id = await service.async_resolve_account_id(session, user_id, researcher_id)
     items = await service.async_list_logs(session, account_id, limit=200)
+    await _save_trading_cache(cache_name, items)
     return ApiResponse(data=ListResponse(items=items, total=len(items)))
 
 
@@ -238,8 +323,13 @@ async def trading_stats(
     """获取历史交易统计（收益曲线、月度收益、风控指标、日收益序列）"""
     if not session or not researcher_id:
         return ApiResponse(data=_empty_stats())
+    cache_name = _trading_cache_name("stats", user_id, researcher_id)
+    cached = await _load_trading_cache(cache_name, _STATS_ADAPTER)
+    if cached is not None:
+        return ApiResponse(data=cached)
     account_id = await service.async_resolve_account_id(session, user_id, researcher_id)
     stats = await service.async_get_stats(session, account_id)
+    await _save_trading_cache(cache_name, stats)
     return ApiResponse(data=stats)
 
 
@@ -271,6 +361,7 @@ async def place_order(
     if not payload.researcher_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="researcher_id 缺失")
     data = await service.async_place_order(session, user_id, payload)
+    await _invalidate_trading_page_cache(user_id, payload.researcher_id)
     return ApiResponse(data=data)
 
 
@@ -781,8 +872,22 @@ async def daily_review_stream(
 async def daily_review(
     researcher_id: str = Query(..., description="研究员 ID"),
     session: AsyncSession = Depends(db_session_dependency),
-) -> ApiResponse[dict]:
-    """盘后教练复盘 —— 非流式版本(供调度/测试使用)。"""
-    data = await run_daily_review(session, researcher_id=researcher_id)
-    await session.commit()
-    return ApiResponse(data=data)
+) -> ApiResponse[DailyReviewResponse]:
+    """盘后教练复盘 —— 用户侧只读取当天已生成报告，不触发 LLM。"""
+    report = await get_existing_daily_review_report(
+        session, researcher_id=researcher_id, trade_date=date.today(),
+    )
+    if report is None:
+        raise HTTPException(status_code=404, detail="今日盘后教练复盘尚未生成")
+    return ApiResponse(data=DailyReviewResponse(
+        report_id=report.id,
+        trade_date=report.trade_date.isoformat(),
+        researcher_id=report.researcher_id,
+        coach_report_md=report.coach_report_md,
+        alpha_vs_index=report.alpha_vs_index,
+        alpha_vs_sector=report.alpha_vs_sector,
+        win_rate=report.win_rate,
+        total_pnl=report.total_pnl,
+        generated_at=report.generated_at,
+        reused=True,
+    ))

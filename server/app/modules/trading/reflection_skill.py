@@ -46,6 +46,55 @@ class TradingReflectionSkill:
         symbol = str(trade_context.get("symbol") or "").strip()
         return f"{action}｜{name}({symbol})" if symbol else f"{action}｜{name}"
 
+    def build_fallback_reflection(
+        self,
+        *,
+        researcher_name: str,
+        researcher_prompt: str,
+        trade_context: dict[str, Any],
+    ) -> str:
+        """Legacy synchronous fallback kept for tests and non-LLM callers.
+
+        The main path is `build_trade_reflection`; this method only formats facts
+        already present in `trade_context` and never calls external services.
+        """
+        del researcher_prompt
+        side = str(trade_context.get("side") or "buy")
+        symbol = str(trade_context.get("symbol") or "-")
+        name = str(trade_context.get("name") or symbol)
+        price = _fmt_money(trade_context.get("price"))
+        cost_price = _fmt_money(trade_context.get("cost_price"))
+        realized_pnl = _fmt_money(trade_context.get("realized_pnl"))
+        realized_pnl_pct = _fmt_pct(trade_context.get("realized_pnl_pct"), ratio=True)
+        reason = str(trade_context.get("reason") or "未提供")
+        market_snapshot = trade_context.get("market_snapshot") if isinstance(trade_context, dict) else None
+        quote = market_snapshot.get("quote", {}) if isinstance(market_snapshot, dict) else {}
+        industry = market_snapshot.get("industry", {}) if isinstance(market_snapshot, dict) else {}
+        sentiment = market_snapshot.get("market_sentiment", {}) if isinstance(market_snapshot, dict) else {}
+        main_inflow_yi = _fmt_yi(quote.get("main_net_inflow"))
+        industry_name = str(industry.get("name") or quote.get("industry") or "未知行业")
+        trade_result = (
+            f"交易结果：已实现盈亏 {realized_pnl} 元，收益率 {realized_pnl_pct}。"
+            if side == "sell"
+            else "交易结果：买入成交，等待后续验证。"
+        )
+        return (
+            "## 交易复盘\n\n"
+            "| 股票名称 | 股票代码 | 买入价格 | 卖出价格 |\n"
+            "| --- | --- | --- | --- |\n"
+            f"| {name} | {symbol} | {cost_price} 元 | {price} 元 |\n\n"
+            f"{trade_result}\n\n"
+            f"操作原因：{reason}\n\n"
+            "## 执行反思\n\n"
+            f"{researcher_name} 需要重点复核成交纪律、仓位暴露与盘口承接。"
+            f"成交时 {industry_name} 板块涨幅 {_fmt_pct(industry.get('change_pct'))}，"
+            f"主力净流入 {main_inflow_yi}，涨停家数 {sentiment.get('limit_up_count', 0)} 家，"
+            f"跌停家数 {sentiment.get('limit_down_count', 0)} 家。\n\n"
+            "## 次日展望\n\n"
+            f"- 若 {industry_name} 继续领涨且个股不破成交价，保留观察。\n"
+            "- 若板块转弱或封单质量下降，优先降低仓位。\n"
+        )
+
     async def build_trade_reflection(
         self,
         *,
@@ -300,3 +349,30 @@ def _is_same_trade(record: TradeRecord, ctx: dict[str, Any]) -> bool:
         )
     except (TypeError, ValueError):
         return False
+
+
+def _fmt_money(value: Any) -> str:
+    try:
+        return f"{float(value):.2f}"
+    except (TypeError, ValueError):
+        return "-"
+
+
+def _fmt_pct(value: Any, *, ratio: bool = False) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "-"
+    if ratio:
+        number *= 100
+    sign = "+" if number > 0 else ""
+    return f"{sign}{number:.2f}%"
+
+
+def _fmt_yi(value: Any) -> str:
+    try:
+        number = float(value) / 100_000_000
+    except (TypeError, ValueError):
+        return "-"
+    sign = "+" if number > 0 else ""
+    return f"{sign}{number:.2f} 亿"

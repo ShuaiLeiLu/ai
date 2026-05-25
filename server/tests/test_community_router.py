@@ -6,7 +6,34 @@ from httpx import ASGITransport, AsyncClient
 
 from app.api.deps import get_optional_session
 from app.core.security import get_current_user_id
+from app.modules.community.schemas import CommunityPost
 from app.modules.community.router import legacy_router
+from app.modules.page_cache import save_cached
+
+
+class FakeRedis:
+    def __init__(self) -> None:
+        self.store: dict[str, str] = {}
+
+    async def get(self, key: str) -> str | None:
+        return self.store.get(key)
+
+    async def set(self, key: str, value: str, *, ex: int | None = None, nx: bool = False) -> bool:
+        self.store[key] = value
+        return True
+
+    async def delete(self, key: str) -> int:
+        existed = key in self.store
+        self.store.pop(key, None)
+        return int(existed)
+
+
+class FakeRedisFactory:
+    def __init__(self, redis: FakeRedis) -> None:
+        self._redis = redis
+
+    def get_client(self) -> FakeRedis:
+        return self._redis
 
 
 @pytest.mark.asyncio
@@ -107,3 +134,45 @@ async def test_community_mention_config_falls_back_when_database_unavailable() -
     researchers = response.json()["data"]["researchers"]
     assert len(researchers) >= 3
     assert researchers[0]["name"] == "基本面分析·阿平"
+
+
+@pytest.mark.asyncio
+async def test_community_list_reads_cached_snapshot_before_service(monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    from app.modules.community import router as community_router
+
+    redis = FakeRedis()
+    cached_items = [
+        CommunityPost(
+            post_id="post_cached",
+            title="缓存帖子",
+            author="缓存用户",
+            excerpt="缓存摘要",
+            likes=1,
+            comments=0,
+            created_at=datetime(2026, 5, 25, 9, 30, tzinfo=UTC),
+        )
+    ]
+    await save_cached(redis, "community:posts:q=:scope=all:sort=latest:user=u_test", cached_items, ttl_seconds=120)
+
+    async def fail_list(*_args: object, **_kwargs: object) -> list[CommunityPost]:
+        raise AssertionError("cached community list must not call service")
+
+    monkeypatch.setattr(community_router.service, "async_list_posts", fail_list)
+    monkeypatch.setattr(
+        "app.modules.community.router.get_container",
+        lambda: SimpleNamespace(redis=FakeRedisFactory(redis)),
+        raising=False,
+    )
+
+    response = await community_router.legacy_list_posts(
+        q=None,
+        scope="all",
+        sort="latest",
+        user_id="u_test",
+        session=object(),  # type: ignore[arg-type]
+    )
+
+    assert response.data.items == cached_items
