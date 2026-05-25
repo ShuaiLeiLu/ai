@@ -89,6 +89,26 @@ def _build_trade_event(
         else datetime.now(tz=UTC).isoformat()
     )
     strategy_config = getattr(researcher, "strategy_config", None) or {}
+    side = str(getattr(record, "side", ""))
+    side_label = "买入" if side == "buy" else "卖出" if side == "sell" else side
+    symbol = str(getattr(record, "symbol", ""))
+    name = str(getattr(record, "name", ""))
+    quantity = int(getattr(record, "quantity", 0) or 0)
+    price = float(getattr(record, "price", 0.0) or 0.0)
+    commission = round(float(getattr(record, "commission", 0.0) or 0.0), 2)
+    amount_text = f"{round(float(amount), 2):.2f}"
+    message = (
+        "【极睿智投｜研究员模拟盘成交提醒】\n"
+        f"研究员：{getattr(researcher, 'name', '')}\n"
+        f"操作：{side_label}\n"
+        f"标的：{name}（{symbol}）\n"
+        f"成交：{quantity} 股 @ {price:.2f} 元\n"
+        f"金额：{amount_text} 元\n"
+        f"费用：{commission:.2f} 元\n"
+        f"策略：{strategy_config.get('strategy_type') or 'unknown'}\n"
+        f"策略依据：{reason}\n"
+        "提示：以上为模拟盘策略执行信息，不构成投资建议。"
+    )
     return {
         "event_type": "researcher_paper_trade",
         "event_id": str(record.id),
@@ -100,14 +120,15 @@ def _build_trade_event(
         "account_id": str(account.id),
         "user_id": str(getattr(account, "user_id", "")),
         "reason": reason,
+        "message": message,
         "trade": {
             "trade_id": str(record.id),
-            "symbol": str(getattr(record, "symbol", "")),
-            "name": str(getattr(record, "name", "")),
-            "side": str(getattr(record, "side", "")),
-            "quantity": int(getattr(record, "quantity", 0) or 0),
-            "price": float(getattr(record, "price", 0.0) or 0.0),
+            "symbol": symbol,
+            "name": name,
+            "side": side,
+            "quantity": quantity,
+            "price": price,
             "amount": round(float(amount), 2),
-            "commission": round(float(getattr(record, "commission", 0.0) or 0.0), 2),
+            "commission": commission,
         },
     }

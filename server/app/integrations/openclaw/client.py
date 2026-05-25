@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import hashlib
-import hmac
 import json
 from dataclasses import dataclass
-from typing import Any
 
 import httpx
 
@@ -14,7 +11,7 @@ from app.core.config import get_settings
 @dataclass(frozen=True, slots=True)
 class OpenClawTradePushConfig:
     endpoint_url: str
-    secret: str = ""
+    token: str = ""
     timeout: float = 5.0
 
     @classmethod
@@ -22,7 +19,7 @@ class OpenClawTradePushConfig:
         settings = get_settings()
         return cls(
             endpoint_url=settings.openclaw_push_url or "",
-            secret=settings.openclaw_push_secret or "",
+            token=settings.openclaw_push_token or settings.openclaw_push_secret or "",
             timeout=settings.openclaw_push_timeout,
         )
 
@@ -33,6 +30,7 @@ class OpenClawTradePushClient:
         config: OpenClawTradePushConfig | None = None,
         *,
         endpoint_url: str | None = None,
+        token: str | None = None,
         secret: str | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
@@ -41,14 +39,15 @@ class OpenClawTradePushClient:
         elif endpoint_url is not None:
             self.config = OpenClawTradePushConfig(
                 endpoint_url=endpoint_url,
-                secret=secret or "",
+                token=token or secret or "",
             )
         else:
             self.config = OpenClawTradePushConfig.from_settings()
-            if secret is not None:
+            auth_token = token if token is not None else secret
+            if auth_token is not None:
                 self.config = OpenClawTradePushConfig(
                     endpoint_url=self.config.endpoint_url,
-                    secret=secret,
+                    token=auth_token,
                     timeout=self.config.timeout,
                 )
         self._client = http_client
@@ -63,28 +62,23 @@ class OpenClawTradePushClient:
             await self._client.aclose()
             self._client = None
 
-    async def push_trade(self, payload: dict[str, Any]) -> None:
+    async def push_trade(self, payload: dict[str, object]) -> None:
         if not self.is_configured:
             return
 
+        message = str(payload.get("message") or "").strip()
+        if not message:
+            return
         body = json.dumps(
-            payload,
+            {"message": message},
             ensure_ascii=False,
-            sort_keys=True,
             separators=(",", ":"),
         ).encode("utf-8")
         headers = {
             "Content-Type": "application/json",
-            "X-OpenClaw-Event": str(payload.get("event_type", "")),
-            "X-OpenClaw-Event-Id": str(payload.get("event_id", "")),
         }
-        if self.config.secret:
-            signature = hmac.new(
-                self.config.secret.encode("utf-8"),
-                body,
-                hashlib.sha256,
-            ).hexdigest()
-            headers["X-OpenClaw-Signature"] = f"sha256={signature}"
+        if self.config.token:
+            headers["Authorization"] = f"Bearer {self.config.token}"
 
         response = await self._get_client().post(
             self.config.endpoint_url,

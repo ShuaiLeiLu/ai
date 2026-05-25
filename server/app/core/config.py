@@ -77,6 +77,7 @@ class Settings(BaseSettings):
 
     openclaw_push_url: str | None = Field(default=None, alias="OPENCLAW_PUSH_URL")
     openclaw_push_secret: str | None = Field(default=None, alias="OPENCLAW_PUSH_SECRET")
+    openclaw_push_token: str | None = Field(default=None, alias="OPENCLAW_PUSH_TOKEN")
     openclaw_push_timeout: float = Field(default=5.0, alias="OPENCLAW_PUSH_TIMEOUT")
 
     @field_validator("cors_origins", mode="before")

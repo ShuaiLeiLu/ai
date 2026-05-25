@@ -122,6 +122,28 @@ async def _run_limit_up_check(db: DatabaseFactory) -> None:
         logger.exception("[调度器] 涨停检查执行异常")
 
 
+async def _run_stop_loss_check(db: DatabaseFactory) -> None:
+    """14:30 检查持仓是否触发止损（仅在交易时段内执行）"""
+    from app.engine.strategy_engine import check_stop_loss
+
+    if not _is_trading_hours():
+        logger.info("[调度器] 当前非交易时段，跳过止损检查")
+        return
+
+    logger.info("[调度器] 开始执行止损检查...")
+    try:
+        async with db.session_factory() as session:
+            result = await asyncio.wait_for(
+                check_stop_loss(session),
+                timeout=_STRATEGY_JOB_TIMEOUT_SECONDS,
+            )
+        logger.info("[调度器] 止损检查完成: %s", result)
+    except TimeoutError:
+        logger.exception("[调度器] 止损检查执行超时，已终止本次任务")
+    except Exception:
+        logger.exception("[调度器] 止损检查执行异常")
+
+
 async def _reset_daily_pnl(db: DatabaseFactory) -> None:
     """每日开盘前重置所有账户的 daily_pnl"""
     from sqlalchemy import text
@@ -563,6 +585,15 @@ def start_scheduler(db: DatabaseFactory, redis: RedisFactory | None = None) -> A
         args=[db],
         id="check_limit_up",
         name="涨停打开检查",
+        replace_existing=True,
+    )
+
+    _scheduler.add_job(
+        _run_stop_loss_check,
+        trigger=CronTrigger(hour=14, minute=30, day_of_week="mon-fri", timezone="Asia/Shanghai"),
+        args=[db],
+        id="check_stop_loss",
+        name="持仓止损检查",
         replace_existing=True,
     )
 

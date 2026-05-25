@@ -118,3 +118,52 @@ async def execute_intraday_confirmation(session: AsyncSession) -> dict:
 async def check_limit_up(session: AsyncSession) -> dict:
     """14:00 generic paper-trading check for tracked limit-up holdings."""
     return await check_limit_up_open(session)
+
+
+async def check_stop_loss(session: AsyncSession) -> dict:
+    """Execute stop-loss checks for strategies that expose one."""
+    from app.engine.strategies import smallcap_rotation
+
+    stmt = select(Researcher).where(
+        Researcher.status == "active",
+        Researcher.strategy_config.isnot(None),
+    )
+    result = await session.execute(stmt)
+    researchers = list(result.scalars().all())
+
+    total_trades = 0
+    details = []
+    for researcher in researchers:
+        strategy_type = strategy_type_for(researcher)
+        strategy = get_strategy(strategy_type)
+        execute_stop_loss = (
+            smallcap_rotation.execute_stop_loss
+            if strategy_type == smallcap_rotation.STRATEGY_TYPE
+            else None
+        )
+        if execute_stop_loss is None:
+            continue
+        try:
+            trades = await execute_stop_loss(session, researcher)
+            total_trades += trades
+            details.append({
+                "researcher": researcher.name,
+                "strategy_type": strategy.strategy_type,
+                "trades": trades,
+            })
+        except Exception as exc:
+            logger.error("[策略引擎] %s 止损检查失败: %s", researcher.name, exc)
+            details.append({
+                "researcher": researcher.name,
+                "strategy_type": strategy.strategy_type,
+                "error": str(exc),
+            })
+
+    if not details:
+        return {"status": "skip", "reason": "no_stop_loss_researchers"}
+    return {
+        "status": "ok",
+        "total_trades": total_trades,
+        "details": details,
+        "executed_at": datetime.now(tz=UTC).isoformat(),
+    }

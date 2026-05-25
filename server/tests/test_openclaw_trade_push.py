@@ -214,7 +214,7 @@ async def test_do_sell_queues_strategy_trade_push(
 
 
 @pytest.mark.asyncio
-async def test_flush_strategy_trade_pushes_posts_every_queued_event_with_signature() -> None:
+async def test_flush_strategy_trade_pushes_broadcasts_trade_messages_with_token() -> None:
     session = SimpleNamespace(info={})
     queue_strategy_trade_push(
         session,
@@ -241,8 +241,8 @@ async def test_flush_strategy_trade_pushes_posts_every_queued_event_with_signatu
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
         client = OpenClawTradePushClient(
-            endpoint_url="https://openclaw.example/webhooks/trades",
-            secret="push-secret",
+            endpoint_url="https://openclaw.cocosite.eu.org/broadcast",
+            token="push-token",
             http_client=http_client,
         )
         delivered = await flush_strategy_trade_pushes(session, client=client)
@@ -250,6 +250,14 @@ async def test_flush_strategy_trade_pushes_posts_every_queued_event_with_signatu
     assert delivered == 2
     assert len(requests) == 2
     payloads = [json.loads(request.content.decode("utf-8")) for request in requests]
-    assert [payload["event_id"] for payload in payloads] == ["trd_001", "trd_002"]
-    assert all(request.headers.get("x-openclaw-signature") for request in requests)
+    assert [request.url.path for request in requests] == ["/broadcast", "/broadcast"]
+    assert all(request.headers.get("authorization") == "Bearer push-token" for request in requests)
+    assert all(set(payload) == {"message"} for payload in payloads)
+    assert "【极睿智投｜研究员模拟盘成交提醒】" in payloads[0]["message"]
+    assert "策略研究员" in payloads[0]["message"]
+    assert "操作：买入" in payloads[0]["message"]
+    assert "标的：浦发银行（600000）" in payloads[0]["message"]
+    assert "操作：卖出" in payloads[1]["message"]
+    assert "策略依据：策略买入" in payloads[0]["message"]
+    assert "提示：以上为模拟盘策略执行信息，不构成投资建议。" in payloads[1]["message"]
     assert session.info["openclaw_strategy_trade_pushes"] == []

@@ -1,40 +1,108 @@
 from __future__ import annotations
 
-from app.engine.strategies.smallcap_rotation import generate_target_pool_from_quotes
+from datetime import date
+
+from app.engine.strategies.smallcap_rotation import generate_target_pool_from_quotes, get_stock_list
 
 
-def _quote(symbol: str, name: str, change_pct: float, amount: float = 100_000_000.0) -> dict:
+def _stock(
+    symbol: str,
+    *,
+    cap: float,
+    sales: float,
+    ms: float,
+    peg: float,
+    turnover_volatility: float = 1.0,
+    eps: float = 1.0,
+    price: float = 10.0,
+    prev_close: float = 9.8,
+    recent_limit_up: bool = False,
+) -> dict:
     return {
         "symbol": symbol,
-        "name": name,
-        "price": 10.0,
-        "change_pct": change_pct,
-        "amount": amount,
-        "prev_close": 9.8,
+        "name": f"股票{symbol}",
+        "price": price,
+        "prev_close": prev_close,
         "volume": 10000,
-        "circulating_market_cap": 0.0,
-        "pe_ratio": 0.0,
-        "pb_ratio": 0.0,
-        "turnover_ratio": 0.0,
-        "volume_ratio": 0.0,
-        "change_pct_60d": change_pct,
-        "change_pct_ytd": change_pct,
-        "_source": "sina_basic",
+        "amount": 100_000_000,
+        "circulating_market_cap": cap,
+        "eps": eps,
+        "sales_growth": sales,
+        "operating_revenue_growth_rate": ms,
+        "total_profit_growth_rate": ms,
+        "net_profit_growth_rate": ms,
+        "earnings_growth": ms,
+        "PEG": peg,
+        "turnover_volatility": turnover_volatility,
+        "start_date": "2020-01-01",
+        "paused": False,
+        "recent_limit_up": recent_limit_up,
     }
 
 
-def test_basic_quote_fallback_selects_pool_without_bj_or_st() -> None:
-    quotes = [
-        _quote("920001", "北交样例", 20.0),
-        _quote("600001", "*ST样例", 19.0),
-        _quote("002001", "主板一", 8.0, 80_000_000),
-        _quote("603001", "主板二", 7.0, 60_000_000),
-        _quote("300001", "创业板", 9.0, 50_000_000),
-    ]
+def _universe() -> list[dict]:
+    stocks: list[dict] = []
+    for index in range(40):
+        stocks.append(
+            _stock(
+                f"000{index:03d}",
+                cap=10_000_000_000 + index * 100_000_000,
+                sales=100 - index,
+                ms=100 - index,
+                peg=1 + index,
+                turnover_volatility=index,
+            )
+        )
+    stocks.append(_stock("688001", cap=1, sales=999, ms=999, peg=0.1))
+    stocks.append(_stock("000999", cap=1, sales=-999, ms=-999, peg=999, eps=-1))
+    stocks.append(_stock("001999", cap=1, sales=-999, ms=-999, peg=999, price=10, prev_close=9.09))
+    return stocks
 
-    pool = generate_target_pool_from_quotes(
-        {"stock_count": 3, "filters": {"exclude_st": True, "exclude_bj": True}},
-        quotes,
+
+def test_get_stock_list_uses_original_sg_ms_peg_factors() -> None:
+    sg_list, ms_list, peg_list = get_stock_list(
+        {"filters": {"exclude_kcb": True, "exclude_new_days": 375}},
+        _universe(),
+        as_of=date(2026, 5, 25),
     )
 
-    assert [item["symbol"] for item in pool] == ["300001", "002001", "603001"]
+    assert [item["symbol"] for item in sg_list[:2]] == ["000000", "000001"]
+    assert [item["symbol"] for item in ms_list[:2]] == ["000000", "000001"]
+    assert [item["symbol"] for item in peg_list[:2]] == ["000000", "000001"]
+    assert "688001" not in {item["symbol"] for item in sg_list + ms_list + peg_list}
+    assert "000999" not in {item["symbol"] for item in sg_list + ms_list + peg_list}
+
+
+def test_target_pool_sorts_union_by_circulating_market_cap_and_blacklist_intersection() -> None:
+    universe = _universe()
+    universe[0]["recent_limit_up"] = True
+    universe[1]["recent_limit_up"] = False
+
+    pool = generate_target_pool_from_quotes(
+        {"stock_count": 3, "filters": {"exclude_new_days": 375}},
+        universe,
+        blacklist={"000000", "000001"},
+        as_of=date(2026, 5, 25),
+    )
+
+    assert [item["symbol"] for item in pool] == ["000001", "000002", "000003"]
+
+
+def test_missing_original_factor_fields_do_not_fall_back_to_momentum() -> None:
+    quotes = [
+        {
+            "symbol": "600519",
+            "name": "贵州茅台",
+            "price": 1500,
+            "prev_close": 1490,
+            "volume": 10000,
+            "amount": 2_000_000_000,
+            "circulating_market_cap": 1_800_000_000_000,
+            "change_pct": 9.0,
+            "change_pct_ytd": 50.0,
+        }
+    ]
+
+    pool = generate_target_pool_from_quotes({"stock_count": 10}, quotes, as_of=date(2026, 5, 25))
+
+    assert pool == []
