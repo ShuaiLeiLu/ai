@@ -214,6 +214,120 @@ async def test_do_sell_queues_strategy_trade_push(
 
 
 @pytest.mark.asyncio
+async def test_do_sell_uses_fallback_when_reflection_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+    strategy_executor_stubs: None,
+) -> None:
+    async def fake_today_buys(*_args: object, **_kwargs: object) -> dict[str, int]:
+        return {}
+
+    async def slow_reflection(*_args: object, **_kwargs: object) -> str:
+        import asyncio
+
+        await asyncio.sleep(0.05)
+        return "too slow"
+
+    monkeypatch.setattr(
+        "app.engine.paper_trading.executor.load_today_buy_quantities",
+        fake_today_buys,
+    )
+    monkeypatch.setattr(
+        "app.engine.paper_trading.executor._trading_reflection_skill.build_trade_reflection",
+        slow_reflection,
+    )
+    monkeypatch.setattr(
+        "app.engine.paper_trading.executor.STRATEGY_REFLECTION_TIMEOUT_SECONDS",
+        0.001,
+    )
+    session = FakeStrategySession()
+    researcher = _researcher()
+    account = _account(available_cash=10_000.0, holding_value=10_000.0, total_asset=20_000.0)
+    position = SimpleNamespace(
+        symbol="600000",
+        name="浦发银行",
+        quantity=100,
+        cost_price=9.0,
+        current_price=10.0,
+        pnl=100.0,
+    )
+
+    trade_count, _pnl = await do_sell(
+        session,  # type: ignore[arg-type]
+        researcher,  # type: ignore[arg-type]
+        account,  # type: ignore[arg-type]
+        position,  # type: ignore[arg-type]
+        10.0,
+        {"prev_close": 9.8, "volume": 100_000},
+        0.0003,
+        0.001,
+        5.0,
+        "策略卖出",
+    )
+
+    assert trade_count == 1
+    assert any(getattr(item, "log_type", None) == "analysis" for item in session.added)
+
+
+@pytest.mark.asyncio
+async def test_do_sell_trade_survives_reflection_and_fallback_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    strategy_executor_stubs: None,
+) -> None:
+    async def fake_today_buys(*_args: object, **_kwargs: object) -> dict[str, int]:
+        return {}
+
+    async def fail_reflection(*_args: object, **_kwargs: object) -> str:
+        raise RuntimeError("llm failed")
+
+    def fail_fallback(*_args: object, **_kwargs: object) -> str:
+        raise RuntimeError("fallback failed")
+
+    monkeypatch.setattr(
+        "app.engine.paper_trading.executor.load_today_buy_quantities",
+        fake_today_buys,
+    )
+    monkeypatch.setattr(
+        "app.engine.paper_trading.executor._trading_reflection_skill.build_trade_reflection",
+        fail_reflection,
+    )
+    monkeypatch.setattr(
+        "app.engine.paper_trading.executor._trading_reflection_skill.build_fallback_reflection",
+        fail_fallback,
+    )
+    session = FakeStrategySession()
+    researcher = _researcher()
+    account = _account(available_cash=10_000.0, holding_value=10_000.0, total_asset=20_000.0)
+    position = SimpleNamespace(
+        symbol="600000",
+        name="浦发银行",
+        quantity=100,
+        cost_price=9.0,
+        current_price=10.0,
+        pnl=100.0,
+    )
+
+    trade_count, _pnl = await do_sell(
+        session,  # type: ignore[arg-type]
+        researcher,  # type: ignore[arg-type]
+        account,  # type: ignore[arg-type]
+        position,  # type: ignore[arg-type]
+        10.0,
+        {"prev_close": 9.8, "volume": 100_000},
+        0.0003,
+        0.001,
+        5.0,
+        "策略卖出",
+    )
+
+    assert trade_count == 1
+    analysis_logs = [
+        item for item in session.added if getattr(item, "log_type", None) == "analysis"
+    ]
+    assert len(analysis_logs) == 1
+    assert "本次 AI 复盘生成失败" in analysis_logs[0].content
+
+
+@pytest.mark.asyncio
 async def test_flush_strategy_trade_pushes_broadcasts_trade_messages_with_token() -> None:
     session = SimpleNamespace(info={})
     queue_strategy_trade_push(

@@ -28,7 +28,7 @@ export function useHotNewsQuery() {
   return { ...query, data: query.data?.hot_news };
 }
 
-export function useAiDigestQuery(enabled = false) {
+export function useAiDigestQuery(enabled = true) {
   return useQuery({
     queryKey: [PREOPEN_QUERY_KEY, 'ai-digest'],
     queryFn: getAiDigest,

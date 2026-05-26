@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from datetime import date
 
-from app.engine.strategies.smallcap_rotation import generate_target_pool_from_quotes, get_stock_list
+import pytest
+from app.engine.strategies import smallcap_rotation
+from app.engine.strategies.smallcap_rotation import (
+    generate_target_pool_from_quotes,
+    get_stock_list,
+)
 
 
 def _stock(
@@ -106,3 +111,56 @@ def test_missing_original_factor_fields_do_not_fall_back_to_momentum() -> None:
     pool = generate_target_pool_from_quotes({"stock_count": 10}, quotes, as_of=date(2026, 5, 25))
 
     assert pool == []
+
+
+@pytest.mark.asyncio
+async def test_adjustment_marker_is_set_only_after_successful_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    researcher = type(
+        "Researcher",
+        (),
+        {
+            "id": "r_marker",
+            "name": "标记测试",
+            "owner_id": "u_demo",
+            "strategy_config": {"stock_count": 1},
+        },
+    )()
+    account = type(
+        "Account",
+        (),
+        {
+            "id": "acct_marker",
+            "available_cash": 1_000_000.0,
+            "total_asset": 1_000_000.0,
+            "holding_value": 0.0,
+            "daily_pnl": 0.0,
+        },
+    )()
+    session = object()
+
+    async def fake_load_account(_session, _researcher):
+        return account
+
+    async def fake_load_positions(_session, _account_id):
+        return {}
+
+    async def fake_fetch_quotes():
+        return [_stock("000001", cap=1_000_000_000, sales=20, ms=20, peg=1)]
+
+    async def fail_commit(*_args, **_kwargs):
+        raise TimeoutError("commit never reached")
+
+    monkeypatch.setattr(smallcap_rotation, "_last_adjustment_date", {})
+    monkeypatch.setattr(smallcap_rotation, "_hold_history", smallcap_rotation.defaultdict(list))
+    monkeypatch.setattr(smallcap_rotation, "_not_buy_again", smallcap_rotation.defaultdict(set))
+    monkeypatch.setattr(smallcap_rotation, "_load_account", fake_load_account)
+    monkeypatch.setattr(smallcap_rotation, "_load_positions", fake_load_positions)
+    monkeypatch.setattr(smallcap_rotation, "_fetch_realtime_quotes_async", fake_fetch_quotes)
+    monkeypatch.setattr(smallcap_rotation, "_mark_to_market_and_commit", fail_commit)
+
+    with pytest.raises(TimeoutError):
+        await smallcap_rotation.execute(session, researcher)
+
+    assert "r_marker" not in smallcap_rotation._last_adjustment_date

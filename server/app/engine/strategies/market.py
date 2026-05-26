@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import logging
+import time
 
 import pandas as pd
 
 from app.integrations.akshare.client import call_akshare_api
 
 logger = logging.getLogger(__name__)
+
+_REALTIME_QUOTES_CACHE_TTL_SECONDS = 15
+_realtime_quotes_cache: tuple[float, list[dict]] | None = None
 
 
 def safe_float(val, default: float = 0.0) -> float:
@@ -19,13 +23,27 @@ def safe_float(val, default: float = 0.0) -> float:
         return default
 
 
+def invalidate_realtime_quotes_cache() -> None:
+    global _realtime_quotes_cache
+    _realtime_quotes_cache = None
+
+
 def fetch_realtime_quotes() -> list[dict]:
     """Fetch A-share realtime quotes through AKShare/东方财富."""
+    global _realtime_quotes_cache
+    now = time.monotonic()
+    if _realtime_quotes_cache is not None:
+        expires_at, cached = _realtime_quotes_cache
+        if now <= expires_at:
+            return cached
+
     try:
         df = call_akshare_api("stock_zh_a_spot_em")
     except Exception:
         logger.warning("[选股] AKShare(em) 获取行情失败，尝试新浪基础行情")
-        return fetch_realtime_quotes_basic()
+        quotes = fetch_realtime_quotes_basic()
+        _realtime_quotes_cache = (now + _REALTIME_QUOTES_CACHE_TTL_SECONDS, quotes)
+        return quotes
 
     quotes: list[dict] = []
     for _, row in df.iterrows():
@@ -55,6 +73,7 @@ def fetch_realtime_quotes() -> list[dict]:
             "change_pct_ytd": safe_float(row.get("年初至今涨跌幅")),
         })
     logger.info("[选股] 获取 A 股行情(em) %d 条", len(quotes))
+    _realtime_quotes_cache = (now + _REALTIME_QUOTES_CACHE_TTL_SECONDS, quotes)
     return quotes
 
 

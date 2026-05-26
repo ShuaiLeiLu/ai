@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections import defaultdict
@@ -22,6 +23,7 @@ from app.modules.trading.reflection_skill import TradingReflectionSkill
 
 logger = logging.getLogger(__name__)
 _trading_reflection_skill = TradingReflectionSkill()
+STRATEGY_REFLECTION_TIMEOUT_SECONDS = 3.0
 
 
 async def build_trade_market_snapshot(symbol: str, market_quote: dict | None = None) -> dict:
@@ -31,6 +33,77 @@ async def build_trade_market_snapshot(symbol: str, market_quote: dict | None = N
     quote_map = await service._load_realtime_quotes([symbol], cache_only=False)
     quote = quote_map.get(symbol)
     return await service._build_trade_market_snapshot(symbol, quote)
+
+
+async def _add_strategy_trade_reflection_log(
+    session: AsyncSession,
+    *,
+    researcher: Researcher,
+    account: TradingAccount,
+    title_context: dict,
+    trade_context: dict,
+    market_symbol: str,
+    market_quote: dict | None,
+) -> None:
+    reflection_context = dict(trade_context)
+
+    async def build_reflection() -> str:
+        reflection_context["market_snapshot"] = await build_trade_market_snapshot(
+            market_symbol,
+            market_quote,
+        )
+        reflection_context["session"] = session
+        reflection_context["account_id"] = account.id
+        return await _trading_reflection_skill.build_trade_reflection(
+            researcher_name=researcher.name,
+            researcher_prompt=researcher.prompt,
+            trade_context=reflection_context,
+        )
+
+    try:
+        reflection = await asyncio.wait_for(
+            build_reflection(),
+            timeout=STRATEGY_REFLECTION_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
+        logger.warning(
+            "策略交易复盘生成失败或超时，使用本地 fallback: %s",
+            exc,
+        )
+        try:
+            reflection = _trading_reflection_skill.build_fallback_reflection(
+                researcher_name=researcher.name,
+                researcher_prompt=researcher.prompt,
+                trade_context=reflection_context,
+            )
+        except Exception:
+            logger.exception("策略交易 fallback 复盘生成失败，写入最小成交确认")
+            side = str(trade_context.get("side") or "trade")
+            symbol = str(trade_context.get("symbol") or "-")
+            name = str(trade_context.get("name") or symbol)
+            price = trade_context.get("price")
+            quantity = trade_context.get("quantity")
+            reason = str(trade_context.get("reason") or "策略触发")
+            reflection = (
+                "## 交易复盘\n\n"
+                f"{researcher.name} 已执行 {side}：{name}({symbol})，"
+                f"成交价 {price}，数量 {quantity}。\n\n"
+                "## 执行反思\n\n"
+                f"本次 AI 复盘生成失败，成交原因：{reason}。\n\n"
+                "## 次日展望\n\n"
+                "按策略风控继续跟踪持仓、止损和止盈条件。\n"
+            )
+
+    session.add(
+        TradeLog(
+            id=f"tl_{uuid4().hex[:8]}",
+            account_id=account.id,
+            log_type="analysis",
+            trade_record_ids="[]",
+            title=_trading_reflection_skill.build_trade_log_title(title_context),
+            content=reflection,
+        )
+    )
 
 
 def invalidate_trading_cache(account: TradingAccount, researcher_id: str) -> None:
@@ -137,10 +210,13 @@ async def do_sell(
         )
     )
     strategy_config = researcher.strategy_config or {}
-    market_snapshot = await build_trade_market_snapshot(pos.symbol, market_quote)
-    reflection = await _trading_reflection_skill.build_trade_reflection(
-        researcher_name=researcher.name,
-        researcher_prompt=researcher.prompt,
+    await _add_strategy_trade_reflection_log(
+        session,
+        researcher=researcher,
+        account=account,
+        title_context={"side": "sell", "name": pos.name, "symbol": pos.symbol},
+        market_symbol=pos.symbol,
+        market_quote=market_quote,
         trade_context={
             "mode": "strategy",
             "strategy_type": strategy_config.get("strategy_type", "smallcap_rotation"),
@@ -160,22 +236,7 @@ async def do_sell(
             "position_ratio": round(amount / 1_000_000.0, 4),
             "available_cash": float(account.available_cash),
             "total_asset": float(account.available_cash + account.holding_value),
-            "market_snapshot": market_snapshot,
-            "session": session,
-            "account_id": account.id,
         },
-    )
-    session.add(
-        TradeLog(
-            id=f"tl_{uuid4().hex[:8]}",
-            account_id=account.id,
-            log_type="analysis",
-            trade_record_ids="[]",
-            title=_trading_reflection_skill.build_trade_log_title(
-                {"side": "sell", "name": pos.name, "symbol": pos.symbol}
-            ),
-            content=reflection,
-        )
     )
 
     if execution.remove_position:
@@ -290,10 +351,13 @@ async def do_buy(
     )
     position_ratio = round(amount / 1_000_000.0, 4)
     strategy_config = researcher.strategy_config or {}
-    market_snapshot = await build_trade_market_snapshot(target["symbol"], target)
-    reflection = await _trading_reflection_skill.build_trade_reflection(
-        researcher_name=researcher.name,
-        researcher_prompt=researcher.prompt,
+    await _add_strategy_trade_reflection_log(
+        session,
+        researcher=researcher,
+        account=account,
+        title_context={"side": "buy", "name": target["name"], "symbol": target["symbol"]},
+        market_symbol=target["symbol"],
+        market_quote=target,
         trade_context={
             "mode": "strategy",
             "strategy_type": strategy_config.get("strategy_type", "smallcap_rotation"),
@@ -308,22 +372,7 @@ async def do_buy(
             "position_ratio": position_ratio,
             "available_cash": float(account.available_cash),
             "total_asset": float(account.available_cash + account.holding_value),
-            "market_snapshot": market_snapshot,
-            "session": session,
-            "account_id": account.id,
         },
-    )
-    session.add(
-        TradeLog(
-            id=f"tl_{uuid4().hex[:8]}",
-            account_id=account.id,
-            log_type="analysis",
-            trade_record_ids="[]",
-            title=_trading_reflection_skill.build_trade_log_title(
-                {"side": "buy", "name": target["name"], "symbol": target["symbol"]}
-            ),
-            content=reflection,
-        )
     )
 
     await session.flush()

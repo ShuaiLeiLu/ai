@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 from app.engine.strategies.sentiment_ultrashort import (
+    SentimentScore,
     _calculate_sentiment_score,
+    _commit_sentiment_trade,
     _enrich_quotes_with_mainline_industries,
     _gen_sentiment_daily_summary,
+    _industry_member_cache,
     _is_main_board_normal_stock,
     _select_halfway_targets,
     _sort_breakout_candidates,
-    SentimentScore,
 )
 from app.integrations.akshare.client import LimitUpStock
 
@@ -96,6 +99,8 @@ def test_breakout_sort_prefers_topic_then_seal_time_then_quality() -> None:
 
 
 def test_halfway_targets_use_enriched_mainline_industry(monkeypatch) -> None:
+    _industry_member_cache.clear()
+
     def fake_call_api(api_name: str, **kwargs):
         assert api_name == "stock_board_industry_cons_em"
         assert kwargs["symbol"] == "新能源"
@@ -147,6 +152,80 @@ def test_halfway_targets_use_enriched_mainline_industry(monkeypatch) -> None:
 
     assert enriched[0]["industry"] == "新能源"
     assert [target["symbol"] for target in targets] == ["600010"]
+
+
+def test_mainline_industry_enrichment_caps_and_caches_external_calls(monkeypatch) -> None:
+    _industry_member_cache.clear()
+    calls: list[str] = []
+
+    def fake_call_api(api_name: str, **kwargs):
+        calls.append(kwargs["symbol"])
+        return pd.DataFrame([
+            {"代码": f"60000{len(calls)}", "名称": "测试"},
+        ])
+
+    monkeypatch.setattr(
+        "app.engine.strategies.sentiment_ultrashort.call_akshare_api",
+        fake_call_api,
+    )
+
+    config = {"topic_confirmation": {"halfway_min_follow_limit_up": 2}}
+    counts = {"行业一": 5, "行业二": 4, "行业三": 3, "行业四": 2}
+
+    _enrich_quotes_with_mainline_industries([], counts, config)
+    _enrich_quotes_with_mainline_industries([], counts, config)
+
+    assert calls == ["行业一", "行业二", "行业三"]
+
+
+def test_mainline_industry_enrichment_can_skip_external_calls(monkeypatch) -> None:
+    _industry_member_cache.clear()
+
+    def fake_call_api(api_name: str, **kwargs):
+        raise AssertionError("industry enrichment should not call AKShare")
+
+    monkeypatch.setattr(
+        "app.engine.strategies.sentiment_ultrashort.call_akshare_api",
+        fake_call_api,
+    )
+
+    enriched = _enrich_quotes_with_mainline_industries(
+        [{"symbol": "600010", "name": "测试600010"}],
+        {"新能源": 2},
+        {"topic_confirmation": {"halfway_min_follow_limit_up": 2}},
+        allow_external_fetch=False,
+    )
+
+    assert enriched == [{"symbol": "600010", "name": "测试600010"}]
+
+
+@pytest.mark.asyncio
+async def test_commit_sentiment_trade_commits_before_push(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class FakeSession:
+        async def commit(self) -> None:
+            calls.append("commit")
+
+    async def fake_flush(session: object) -> None:
+        calls.append("push")
+
+    monkeypatch.setattr(
+        "app.engine.strategies.sentiment_ultrashort.invalidate_trading_cache",
+        lambda account, researcher_id: calls.append("invalidate"),
+    )
+    monkeypatch.setattr(
+        "app.engine.strategies.sentiment_ultrashort.flush_strategy_trade_pushes",
+        fake_flush,
+    )
+
+    await _commit_sentiment_trade(
+        FakeSession(),  # type: ignore[arg-type]
+        type("Account", (), {"id": "acct"})(),  # type: ignore[arg-type]
+        type("Researcher", (), {"id": "r1"})(),  # type: ignore[arg-type]
+    )
+
+    assert calls == ["commit", "invalidate", "push"]
 
 
 def test_halfway_targets_records_rejected_candidates() -> None:

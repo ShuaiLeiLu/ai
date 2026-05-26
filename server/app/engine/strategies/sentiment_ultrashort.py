@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time as monotonic_time
 from collections import Counter
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
@@ -34,6 +35,10 @@ from app.models.trading import Position, TradeLog, TradingAccount
 logger = logging.getLogger(__name__)
 
 STRATEGY_TYPE = "sentiment_ultrashort"
+INDUSTRY_MEMBER_CACHE_TTL_SECONDS = 6 * 3600
+MAX_MAINLINE_INDUSTRY_ENRICH_CALLS = 3
+
+_industry_member_cache: dict[str, tuple[float, dict[str, str]]] = {}
 
 
 @dataclass(slots=True)
@@ -270,18 +275,34 @@ def _industry_limit_counts(limit_up_pool: list[LimitUpStock]) -> Counter[str]:
     return Counter(s.industry or "未分类" for s in limit_up_pool)
 
 
-def _fetch_industry_member_map(industry_names: list[str]) -> dict[str, str]:
+def _fetch_industry_member_map(
+    industry_names: list[str],
+    *,
+    allow_external_fetch: bool = True,
+) -> dict[str, str]:
     member_map: dict[str, str] = {}
     for industry in industry_names:
+        now = monotonic_time.monotonic()
+        cached = _industry_member_cache.get(industry)
+        if cached and now - cached[0] < INDUSTRY_MEMBER_CACHE_TTL_SECONDS:
+            member_map.update(cached[1])
+            continue
+        if not allow_external_fetch:
+            continue
+
         try:
             df = call_akshare_api("stock_board_industry_cons_em", symbol=industry)
         except Exception:
             logger.exception("[情绪超短] 获取行业成分失败：%s", industry)
+            _industry_member_cache[industry] = (now, {})
             continue
+        industry_members: dict[str, str] = {}
         for _, row in df.iterrows():
             symbol = _normalize_stock_symbol(row.get("代码"))
             if symbol:
-                member_map.setdefault(symbol, industry)
+                industry_members.setdefault(symbol, industry)
+        _industry_member_cache[industry] = (now, industry_members)
+        member_map.update(industry_members)
     return member_map
 
 
@@ -289,19 +310,29 @@ def _enrich_quotes_with_mainline_industries(
     all_quotes: list[dict],
     today_limit_counts: Counter[str],
     config: dict,
+    *,
+    allow_external_fetch: bool = True,
 ) -> list[dict]:
     min_follow = int(
         config.get("topic_confirmation", {}).get("halfway_min_follow_limit_up", 2)
     )
+    ordered_counts = (
+        today_limit_counts.most_common()
+        if hasattr(today_limit_counts, "most_common")
+        else sorted(today_limit_counts.items(), key=lambda item: item[1], reverse=True)
+    )
     mainline_industries = [
         industry
-        for industry, count in today_limit_counts.items()
+        for industry, count in ordered_counts
         if industry and industry != "未分类" and count >= min_follow
-    ]
+    ][:MAX_MAINLINE_INDUSTRY_ENRICH_CALLS]
     if not mainline_industries:
         return all_quotes
 
-    industry_by_symbol = _fetch_industry_member_map(mainline_industries)
+    industry_by_symbol = _fetch_industry_member_map(
+        mainline_industries,
+        allow_external_fetch=allow_external_fetch,
+    )
     if not industry_by_symbol:
         return all_quotes
 
@@ -437,13 +468,30 @@ async def _enrich_quotes_with_mainline_industries_async(
     all_quotes: list[dict],
     today_limit_counts: Counter[str],
     config: dict,
+    *,
+    allow_external_fetch: bool = True,
 ) -> list[dict]:
     return await run_sync(
         _enrich_quotes_with_mainline_industries,
         all_quotes,
         today_limit_counts,
         config,
+        allow_external_fetch=allow_external_fetch,
     )
+
+
+async def _commit_sentiment_trade(
+    session: AsyncSession,
+    account: TradingAccount,
+    researcher: Researcher,
+) -> None:
+    try:
+        await session.commit()
+    except Exception:
+        discard_strategy_trade_pushes(session)
+        raise
+    invalidate_trading_cache(account, researcher.id)
+    await flush_strategy_trade_pushes(session)
 
 
 def _is_stock_pool_allowed(
@@ -664,12 +712,14 @@ def _select_low_absorb_targets(
     low_start = time.fromisoformat(low_cfg.get("start", "09:30"))
     low_end = time.fromisoformat(low_cfg.get("end", "09:40"))
     if not _is_within_time_window(now_shanghai, low_start, low_end):
+        current_time = now_shanghai.strftime("%H:%M")
+        window = f"{low_start.strftime('%H:%M')}-{low_end.strftime('%H:%M')}"
         _audit_candidate(
             audit,
             stage="低吸",
             symbol="-",
             name="时间窗",
-            reason=f"当前时间 {now_shanghai.strftime('%H:%M')} 不在低吸窗口 {low_start.strftime('%H:%M')}-{low_end.strftime('%H:%M')}",
+            reason=f"当前时间 {current_time} 不在低吸窗口 {window}",
         )
         return []
 
@@ -780,12 +830,14 @@ def _select_halfway_targets(
     half_start = time.fromisoformat(half_cfg.get("start", "09:40"))
     half_end = time.fromisoformat(half_cfg.get("end", "10:30"))
     if not _is_within_time_window(now_shanghai, half_start, half_end):
+        current_time = now_shanghai.strftime("%H:%M")
+        window = f"{half_start.strftime('%H:%M')}-{half_end.strftime('%H:%M')}"
         _audit_candidate(
             audit,
             stage="半路",
             symbol="-",
             name="时间窗",
-            reason=f"当前时间 {now_shanghai.strftime('%H:%M')} 不在半路窗口 {half_start.strftime('%H:%M')}-{half_end.strftime('%H:%M')}",
+            reason=f"当前时间 {current_time} 不在半路窗口 {window}",
         )
         return []
 
@@ -799,12 +851,13 @@ def _select_halfway_targets(
         industry = str(q.get("industry", "") or q.get("所属行业", ""))
         change_pct = safe_float(q.get("change_pct"))
         if not industry or today_limit_counts.get(industry, 0) < min_follow:
+            industry_label = industry or "行业未随行情落库/待接入"
             _audit_candidate(
                 audit,
                 stage="半路",
                 symbol=symbol,
                 name=name,
-                reason=f"题材确认不足：{industry or '行业未随行情落库/待接入'} 涨停少于 {min_follow} 家",
+                reason=f"题材确认不足：{industry_label} 涨停少于 {min_follow} 家",
             )
             continue
         if change_pct < half_cfg.get("min_change_pct", 5):
@@ -982,6 +1035,7 @@ async def execute(session: AsyncSession, researcher: Researcher) -> int:
             all_quotes,
             today_limit_counts,
             config,
+            allow_external_fetch=False,
         )
     quotes = _quote_map(all_quotes)
     price_map = {symbol: safe_float(q.get("price")) for symbol, q in quotes.items()}
@@ -1042,8 +1096,11 @@ async def execute(session: AsyncSession, researcher: Researcher) -> int:
             trade_count += sc
             sell_count += sc
             daily_pnl += pnl
-            if sc > 0 and int(pos.quantity) <= 0:
-                current_positions.pop(symbol, None)
+            if sc > 0:
+                await _commit_sentiment_trade(session, account, researcher)
+                if int(pos.quantity) <= 0:
+                    current_positions.pop(symbol, None)
+                await _commit_sentiment_trade(session, account, researcher)
 
     max_total_ratio = _stage_max_position_ratio(config, score.stage)
     max_single_ratio = float(config.get("max_single_position_ratio", 0.20))
@@ -1180,6 +1237,7 @@ async def execute(session: AsyncSession, researcher: Researcher) -> int:
         buy_count += bc
         daily_pnl += pnl
         if bc > 0:
+            await _commit_sentiment_trade(session, account, researcher)
             exposure_budget = max(0.0, exposure_budget - per_trade_budget)
 
     for symbol, pos in current_positions.items():

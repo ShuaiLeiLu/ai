@@ -37,6 +37,7 @@ _STRATEGY_JOB_TIMEOUT_SECONDS = 90
 _scheduler: AsyncIOScheduler | None = None
 _database: DatabaseFactory | None = None
 _SHANGHAI_TZ = ZoneInfo("Asia/Shanghai")
+_strategy_job_running = False
 
 
 def _now_shanghai() -> dt:
@@ -64,7 +65,9 @@ async def _run_daily_rotation(db: DatabaseFactory) -> None:
         logger.info("[调度器] 当前非交易时段，跳过调仓")
         return
 
+    global _strategy_job_running
     logger.info("[调度器] 开始执行每日轮动调仓...")
+    _strategy_job_running = True
     try:
         async with db.session_factory() as session:
             result = await execute_daily_rotation(
@@ -76,6 +79,8 @@ async def _run_daily_rotation(db: DatabaseFactory) -> None:
         logger.exception("[调度器] 调仓执行超时，已终止本次任务")
     except Exception:
         logger.exception("[调度器] 调仓执行异常")
+    finally:
+        _strategy_job_running = False
 
 
 async def _run_intraday_confirmation(db: DatabaseFactory) -> None:
@@ -86,7 +91,9 @@ async def _run_intraday_confirmation(db: DatabaseFactory) -> None:
         logger.info("[调度器] 当前非交易时段，跳过盘中确认")
         return
 
+    global _strategy_job_running
     logger.info("[调度器] 开始执行盘中承接确认...")
+    _strategy_job_running = True
     try:
         async with db.session_factory() as session:
             result = await execute_intraday_confirmation(
@@ -98,6 +105,8 @@ async def _run_intraday_confirmation(db: DatabaseFactory) -> None:
         logger.exception("[调度器] 盘中确认执行超时，已终止本次任务")
     except Exception:
         logger.exception("[调度器] 盘中确认执行异常")
+    finally:
+        _strategy_job_running = False
 
 
 async def _run_limit_up_check(db: DatabaseFactory) -> None:
@@ -291,6 +300,9 @@ async def _refresh_trading_quotes(db: DatabaseFactory, redis_factory: RedisFacto
     if not _is_trading_hours():
         logger.info("[调度器] 当前非交易时段，跳过模拟盘行情缓存刷新")
         return
+    if _strategy_job_running:
+        logger.info("[调度器] 策略任务运行中，跳过本轮模拟盘行情缓存刷新")
+        return
 
     try:
         async with db.session_factory() as session:
@@ -321,8 +333,15 @@ async def _refresh_trading_quotes(db: DatabaseFactory, redis_factory: RedisFacto
 
 async def _refresh_page_data_caches() -> None:
     """Refresh page-facing caches that should not block user requests."""
+    if _strategy_job_running:
+        logger.info("[调度器] 策略任务运行中，跳过本轮页面数据缓存刷新")
+        return
+
     try:
-        from app.modules.news_analysis.router import refresh_ai_panels_cache, refresh_news_analysis_cache
+        from app.modules.news_analysis.router import (
+            refresh_ai_panels_cache,
+            refresh_news_analysis_cache,
+        )
 
         await refresh_news_analysis_cache()
         await refresh_ai_panels_cache()
@@ -337,6 +356,20 @@ async def _refresh_page_data_caches() -> None:
         logger.info("[调度器] 题材掘金缓存刷新完成")
     except Exception:
         logger.exception("[调度器] 题材掘金缓存刷新异常")
+
+
+async def _refresh_preopen_group_guarded(
+    redis_factory: RedisFactory,
+    group_name: str,
+    *,
+    force: bool = False,
+) -> None:
+    if _strategy_job_running:
+        logger.info("[调度器] 策略任务运行中，跳过盘前快照刷新：%s", group_name)
+        return
+    from app.modules.preopen.snapshot_refresher import refresh_preopen_group
+
+    await refresh_preopen_group(redis_factory, group_name, force=force)
 
 
 async def _settle_pending_orders_job(db: DatabaseFactory) -> None:
@@ -750,11 +783,11 @@ def start_scheduler(db: DatabaseFactory, redis: RedisFactory | None = None) -> A
             max_instances=1,
         )
 
-        from app.modules.preopen.snapshot_refresher import PREOPEN_REFRESH_GROUPS, refresh_preopen_group
+        from app.modules.preopen.snapshot_refresher import PREOPEN_REFRESH_GROUPS
 
         for index, group in enumerate(PREOPEN_REFRESH_GROUPS.values()):
             _scheduler.add_job(
-                refresh_preopen_group,
+                _refresh_preopen_group_guarded,
                 trigger=IntervalTrigger(seconds=group.interval_seconds, timezone="Asia/Shanghai"),
                 args=[redis, group.name],
                 id=f"refresh_preopen_snapshot_{group.name}",
@@ -764,7 +797,7 @@ def start_scheduler(db: DatabaseFactory, redis: RedisFactory | None = None) -> A
                 coalesce=True,
             )
             _scheduler.add_job(
-                refresh_preopen_group,
+                _refresh_preopen_group_guarded,
                 trigger="date",
                 run_date=_now_shanghai() + timedelta(seconds=15 + index * 5),
                 args=[redis, group.name],
@@ -777,10 +810,19 @@ def start_scheduler(db: DatabaseFactory, redis: RedisFactory | None = None) -> A
 
     # 启动后延迟 5 秒执行一次调仓（仅交易时段内生效，非交易时段自动跳过）
     if _is_trading_hours():
+        now = _now_shanghai()
+        initial_delay = 5
+        if now.time() < time(9, 25):
+            seconds_until_open = (
+                now.replace(hour=9, minute=25, second=5) - now
+            ).total_seconds()
+            initial_delay = max(5, int(seconds_until_open))
+        elif now.time() < time(9, 40):
+            initial_delay = 90
         _scheduler.add_job(
             _run_daily_rotation,
             trigger="date",
-            run_date=_now_shanghai() + timedelta(seconds=5),
+            run_date=now + timedelta(seconds=initial_delay),
             args=[db],
             id="initial_rotation",
             name="启动后首次调仓",

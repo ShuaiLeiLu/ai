@@ -15,6 +15,7 @@ import { useState } from 'react';
 
 import { PageCard } from '@/components/ui/page-card';
 import { useAiDigestQuery } from '@/features/preopen/hooks';
+import { HttpError } from '@/lib/request/http-client';
 import type { AiDigest } from '@/types/preopen';
 
 /** 情绪 → 标签 */
@@ -51,33 +52,23 @@ function highlightText(text: string): React.ReactNode {
   );
 }
 
-/** 无数据/未登录时的占位演示文案（与设计稿一致） */
-const MOCK_NARRATIVE =
-  '隔夜美股科技股领涨，纳指收涨 1.4%。结合北向资金连续 3 日净流入与科创50成分股突破关键阻力位，建议关注半导体设备、AI算力 板块开盘竞价表现。需警惕地产链情绪修复后的获利回吐压力。';
-const MOCK_TAGS = ['半导体', 'AI算力', '北向资金', '科创50'];
-
 export function AiDigestCard() {
   const [messageApi, messageContext] = message.useMessage();
-  const [requested, setRequested] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
-  const { data, isLoading, isFetching, error, refetch } = useAiDigestQuery(requested);
+  const { data, isLoading, isFetching, error, refetch } = useAiDigestQuery();
   const meta = sentimentMeta[data?.sentiment ?? 'neutral'];
   const loading = isLoading || isFetching;
+  const isMissingTodayDigest = error instanceof HttpError && error.status === 404;
+  const displayError = error && !isMissingTodayDigest ? error : null;
 
   const handleRequestDigest = () => {
-    if (requested) {
-      void refetch();
-      return;
-    }
-    setRequested(true);
+    void refetch();
   };
 
-  // 把后端可能给出的字段拼成一段叙事文本；无数据时用占位演示文案
-  const narrative: string = data
-    ? [data.headline, ...(data.key_points ?? []).slice(0, 2)].filter(Boolean).join(' ')
-    : MOCK_NARRATIVE;
+  // 把后端可能给出的字段拼成一段叙事文本。
+  const narrative: string = data ? [data.headline, ...(data.key_points ?? []).slice(0, 2)].filter(Boolean).join(' ') : '';
 
-  // 标签 chip：把机会方向 + 新闻驱动合并去重，最多 6 个；无数据时用占位
+  // 标签 chip：把机会方向 + 新闻驱动合并去重，最多 6 个。
   const chipTags = data
     ? Array.from(
         new Set([
@@ -85,13 +76,12 @@ export function AiDigestCard() {
           ...(data?.news_drivers ?? []),
         ]),
       ).slice(0, 6)
-    : MOCK_TAGS;
+    : [];
 
-  // 元信息：模型/耗时/数据源（无数据时也展示占位）
-  const isPreview = !data && !loading;
+  // 元信息：模型/耗时/数据源。
   const metaLine = data
     ? `研判官 v3 · ${new Date(data.generated_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 更新`
-    : '研判官 v3.2 · 等待调度生成 · 引用已落库数据';
+    : '研判官 v3 · 等待今日调度生成';
 
   return (
     <PageCard
@@ -106,7 +96,7 @@ export function AiDigestCard() {
           loading={loading}
           onClick={handleRequestDigest}
         >
-          {data ? '刷新' : 'AI 解读'}
+          刷新
         </Button>
       }
       className="relative overflow-hidden"
@@ -126,84 +116,84 @@ export function AiDigestCard() {
           </div>
         )}
 
-        {error && !loading && (
-          <Alert message="AI 解读加载失败" description={error.message} type="error" showIcon />
+        {displayError && !loading && (
+          <Alert message="AI 解读加载失败" description={displayError.message} type="error" showIcon />
         )}
 
-        {!loading && !error && (
+        {!loading && !displayError && (
           <>
             {/* 元信息条 */}
             <div className="mb-3 flex items-center gap-2 text-[11px] text-ink-0/55">
               <span
                 className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10.5px] font-semibold tracking-wide ${meta.cls}`}
               >
-                {data ? meta.label : '示例'}
+                {data ? meta.label : '今日'}
               </span>
               <span>·</span>
               <span>{metaLine}</span>
             </div>
 
-            {/* 大字摘要叙事 */}
-            <p className={`serif text-[15.5px] leading-[1.85] sm:text-[16px] ${isPreview ? 'text-ink-0/60' : 'text-ink-0'}`}>
-              {highlightText(narrative)}
-            </p>
+            {data ? (
+              <>
+                {/* 大字摘要叙事 */}
+                <p className="serif text-[15.5px] leading-[1.85] text-ink-0 sm:text-[16px]">
+                  {highlightText(narrative)}
+                </p>
 
-            {/* 标签 chip */}
-            {chipTags.length > 0 && (
-              <div className="mt-4 flex flex-wrap gap-1.5">
-                {chipTags.map((t) => (
-                  <span
-                    key={t}
-                    className="rounded-full border border-white/10 bg-white/[0.06] px-2.5 py-0.5 text-[11px] text-ink-0/80"
+                {/* 标签 chip */}
+                {chipTags.length > 0 && (
+                  <div className="mt-4 flex flex-wrap gap-1.5">
+                    {chipTags.map((t) => (
+                      <span
+                        key={t}
+                        className="rounded-full border border-white/10 bg-white/[0.06] px-2.5 py-0.5 text-[11px] text-ink-0/80"
+                      >
+                        #{t}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {/* 次级要点（机会/风险） */}
+                {data.opportunity_sectors?.length || data.risk_sectors?.length ? (
+                  <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {data.opportunity_sectors?.length ? (
+                      <SubList title="机会方向" items={data.opportunity_sectors} tone="up" />
+                    ) : null}
+                    {data.risk_sectors?.length ? (
+                      <SubList title="风险方向" items={data.risk_sectors} tone="down" />
+                    ) : null}
+                  </div>
+                ) : null}
+
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <Button
+                    size="small"
+                    type="primary"
+                    ghost
+                    className="!border-gold-500/50 !text-gold-300"
+                    onClick={() => setReportOpen(true)}
                   >
-                    #{t}
-                  </span>
-                ))}
-              </div>
-            )}
-
-            {/* 次级要点（机会/风险） */}
-            {data && (data.opportunity_sectors?.length || data.risk_sectors?.length) ? (
-              <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                {data.opportunity_sectors?.length ? (
-                  <SubList title="机会方向" items={data.opportunity_sectors} tone="up" />
-                ) : null}
-                {data.risk_sectors?.length ? (
-                  <SubList title="风险方向" items={data.risk_sectors} tone="down" />
-                ) : null}
-              </div>
-            ) : null}
-
-            {data && (
-              <div className="mt-4 flex flex-wrap items-center gap-2">
-                <Button
-                  size="small"
-                  type="primary"
-                  ghost
-                  className="!border-gold-500/50 !text-gold-300"
-                  onClick={() => setReportOpen(true)}
-                >
-                  查看详细报告
-                </Button>
-                <Button
-                  size="small"
-                  type="text"
-                  className="!text-ink-0/60 hover:!text-ink-0"
-                  onClick={() => {
-                    void navigator.clipboard?.writeText(
-                      [data.report_title ?? '盘前热讯 AI 解读报告', data.headline, ...(data.key_points ?? [])].join('\n'),
-                    );
-                    messageApi.success('报告摘要已复制');
-                  }}
-                >
-                  复制摘要
-                </Button>
-              </div>
-            )}
-
-            {isPreview && (
-              <div className="mt-4 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-[11.5px] text-ink-0/55">
-                以上为示例预览 · 点击右上「AI 解读」读取今日已生成研判
+                    查看详细报告
+                  </Button>
+                  <Button
+                    size="small"
+                    type="text"
+                    className="!text-ink-0/60 hover:!text-ink-0"
+                    onClick={() => {
+                      void navigator.clipboard?.writeText(
+                        [data.report_title ?? '盘前热讯 AI 解读报告', data.headline, ...(data.key_points ?? [])].join('\n'),
+                      );
+                      messageApi.success('报告摘要已复制');
+                    }}
+                  >
+                    复制摘要
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <div className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-[12px] text-ink-0/60">
+                今日摘要暂未生成，请稍后刷新。
               </div>
             )}
           </>
@@ -212,6 +202,23 @@ export function AiDigestCard() {
       <AiDigestReportModal data={data} open={reportOpen} onClose={() => setReportOpen(false)} />
     </PageCard>
   );
+}
+
+function buildReportText(data: AiDigest): string {
+  const sections = data.report_sections ?? [];
+  const generatedAt = new Date(data.generated_at).toLocaleString('zh-CN', { hour12: false });
+
+  return [
+    data.report_title ?? '盘前热讯 AI 解读报告',
+    `报告时间：${generatedAt}`,
+    data.headline,
+    ...sections.flatMap((section) => [
+      '',
+      section.title,
+      ...(section.paragraphs ?? []),
+      ...(section.bullets ?? []).map((item) => `- ${item}`),
+    ]),
+  ].join('\n');
 }
 
 function AiDigestReportModal({
@@ -231,18 +238,7 @@ function AiDigestReportModal({
   const intervalEnd = new Date(data.interval_end).toLocaleString('zh-CN', { hour12: false });
 
   const copyReport = () => {
-    const text = [
-      data.report_title ?? '盘前热讯 AI 解读报告',
-      `报告时间：${generatedAt}`,
-      data.headline,
-      ...sections.flatMap((section) => [
-        '',
-        section.title,
-        ...(section.paragraphs ?? []),
-        ...(section.bullets ?? []).map((item) => `- ${item}`),
-      ]),
-    ].join('\n');
-    void navigator.clipboard?.writeText(text);
+    void navigator.clipboard?.writeText(buildReportText(data));
     messageApi.success('报告全文已复制');
   };
 
@@ -261,7 +257,6 @@ function AiDigestReportModal({
         <div className="mb-6 flex flex-col gap-4 border-b border-dashed border-ink-100 pb-5 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <div className="flex items-center gap-2">
-              <span className="text-[22px]">📰</span>
               <h1 className="serif text-[24px] font-bold leading-tight text-ink-900">
                 {data.report_title ?? '盘前热讯 AI 解读报告'}
               </h1>

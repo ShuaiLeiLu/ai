@@ -446,7 +446,6 @@ async def execute(session: AsyncSession, researcher: Researcher) -> int:
     if _last_adjustment_date.get(rid) == today_str:
         logger.info("[小市值] %s 今日已调仓，跳过重复执行", researcher.name)
         return 0
-    _last_adjustment_date[rid] = today_str
 
     account = await _load_account(session, researcher)
     current_positions = await _load_positions(session, account.id)
@@ -543,6 +542,7 @@ async def execute(session: AsyncSession, researcher: Researcher) -> int:
         sell_count,
         buy_count,
     )
+    _last_adjustment_date[rid] = today_str
     return trade_count
 
 

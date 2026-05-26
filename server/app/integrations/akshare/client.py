@@ -26,12 +26,13 @@ import json
 import logging
 import os
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime
 from functools import partial
 from threading import Lock
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
 from urllib.parse import urlencode
 from urllib.request import ProxyHandler, Request, build_opener
 from zoneinfo import ZoneInfo
@@ -74,7 +75,14 @@ def _install_proxy_bypass() -> None:
         _original_merge = requests.sessions.Session.merge_environment_settings
         _original_request = requests.sessions.Session.request
 
-        def merge_without_proxy(self: Any, url: str, proxies: Any, stream: Any, verify: Any, cert: Any) -> dict[str, Any]:
+        def merge_without_proxy(
+            self: Any,
+            url: str,
+            proxies: Any,
+            stream: Any,
+            verify: Any,
+            cert: Any,
+        ) -> dict[str, Any]:
             settings = _original_merge(self, url, proxies, stream, verify, cert)
             settings["proxies"] = {}
             return settings
@@ -174,6 +182,8 @@ CACHE_TTL_INDUSTRY = 60       # 行业板块：60 秒
 CACHE_TTL_LIMIT_UP = 30       # 涨停池/天梯：30 秒
 CACHE_TTL_LIMIT_DOWN = 15     # 跌停/跌幅榜：15 秒
 CACHE_TTL_STRONG = 15         # 强势股/涨幅榜：15 秒
+CACHE_TTL_HISTORICAL_POOL = 24 * 3600  # 历史涨跌停池：1 天
+CACHE_TTL_POOL_FAILURE = 60   # 外部池数据失败负缓存：1 分钟
 
 
 # ════════════════════════════════════════════════════════════
@@ -543,7 +553,7 @@ def get_stock_quotes() -> list[StockQuote]:
         return cached
 
     # 并发去重：同一时刻只允许一个线程去外部拉全市场行情。
-    # 其他请求等待第一个请求完成后直接读缓存，避免 account / positions / stats 并发时重复打满外部源。
+    # 其他请求等待第一个请求完成后直接读缓存，避免并发时重复打满外部源。
     with _stock_quotes_lock:
         cached = _cache.get(cache_key)
         if cached is not None:
@@ -600,7 +610,10 @@ def get_stock_quote_by_symbols(symbols: list[str]) -> dict[str, StockQuote]:
         try:
             quotes.update(_fetch_stock_quotes_eastmoney(missing_symbols))
         except Exception:
-            logger.warning("批量获取个股实时行情失败，逐只尝试备用源：%s", ",".join(missing_symbols))
+            logger.warning(
+                "批量获取个股实时行情失败，逐只尝试备用源：%s",
+                ",".join(missing_symbols),
+            )
             for symbol in missing_symbols:
                 quote = _fetch_stock_quote(symbol)
                 if quote is not None:
@@ -859,7 +872,9 @@ def get_limit_up_pool(trade_date: date | None = None) -> list[LimitUpStock]:
 
     数据缓存 30 秒。
     """
-    dt_str = (trade_date or _latest_trade_date()).strftime("%Y%m%d")
+    latest_trade_date = _latest_trade_date()
+    target_date = trade_date or latest_trade_date
+    dt_str = target_date.strftime("%Y%m%d")
     cache_key = f"limit_up:{dt_str}"
     cached = _cache.get(cache_key)
     if cached is not None:
@@ -869,6 +884,7 @@ def get_limit_up_pool(trade_date: date | None = None) -> list[LimitUpStock]:
         df = call_akshare_api("stock_zt_pool_em", date=dt_str)
     except Exception:
         logger.exception("获取涨停池失败：%s", dt_str)
+        _cache.set(cache_key, [], CACHE_TTL_POOL_FAILURE)
         return []
 
     items: list[LimitUpStock] = []
@@ -888,14 +904,17 @@ def get_limit_up_pool(trade_date: date | None = None) -> list[LimitUpStock]:
             industry=_safe_str(row.get("所属行业")),
         ))
 
-    _cache.set(cache_key, items, CACHE_TTL_LIMIT_UP)
+    ttl = CACHE_TTL_LIMIT_UP if target_date >= latest_trade_date else CACHE_TTL_HISTORICAL_POOL
+    _cache.set(cache_key, items, ttl)
     logger.info("获取涨停池成功：%s -> %d 条", dt_str, len(items))
     return items
 
 
 def get_limit_down_pool(trade_date: date | None = None) -> list[LimitDownStock]:
     """获取跌停股池（东方财富数据源）。"""
-    dt_str = (trade_date or _latest_trade_date()).strftime("%Y%m%d")
+    latest_trade_date = _latest_trade_date()
+    target_date = trade_date or latest_trade_date
+    dt_str = target_date.strftime("%Y%m%d")
     cache_key = f"limit_down:{dt_str}"
     cached = _cache.get(cache_key)
     if cached is not None:
@@ -905,6 +924,7 @@ def get_limit_down_pool(trade_date: date | None = None) -> list[LimitDownStock]:
         df = call_akshare_api("stock_zt_pool_dtgc_em", date=dt_str)
     except Exception:
         logger.exception("获取跌停池失败：%s", dt_str)
+        _cache.set(cache_key, [], CACHE_TTL_POOL_FAILURE)
         return []
 
     items: list[LimitDownStock] = []
@@ -918,7 +938,8 @@ def get_limit_down_pool(trade_date: date | None = None) -> list[LimitDownStock]:
             turnover_ratio=_safe_float(row.get("换手率")),
         ))
 
-    _cache.set(cache_key, items, CACHE_TTL_LIMIT_DOWN)
+    ttl = CACHE_TTL_LIMIT_DOWN if target_date >= latest_trade_date else CACHE_TTL_HISTORICAL_POOL
+    _cache.set(cache_key, items, ttl)
     return items
 
 
@@ -1623,8 +1644,6 @@ def get_dividend_events(symbol: str, lookback_days: int = 365) -> list[DividendE
                 continue
             if ex_date < cutoff:
                 continue
-            # 解析"派10送X转Y"格式
-            plan = _safe_str(row.get("方案") or row.get("分红方案")).replace(" ", "")
             cash_per_share = _safe_float(row.get("派息(元/股)") or row.get("派息") or 0)
             bonus_ratio = _safe_float(row.get("送股") or row.get("送股(股/10股)") or 0) / 10
             transfer_ratio = _safe_float(row.get("转增") or row.get("转增(股/10股)") or 0) / 10
